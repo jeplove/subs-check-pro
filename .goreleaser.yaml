@@ -52,7 +52,7 @@ builds:
   - id: subs-check-pro
     env:
       - CGO_ENABLED=0
-      - GOEXPERIMENT=greenteagc,jsonv2
+      - GOEXPERIMENT=jsonv2
     goos:
       - linux
       - windows
