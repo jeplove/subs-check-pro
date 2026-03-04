@@ -5,6 +5,7 @@
 1. 将 [`doc/cloudflare/worker.js`](https://github.com/sinspired/subs-check-pro/blob/main/doc/cloudflare/worker.js) 部署到 Cloudflare Workers。
 2. 绑定自定义域名（避免被节点屏蔽）。
 3. 在配置文件中设置 `speed-test-url` 为你的 Workers 地址：
+4. 建议使用 `speed-test-url: random` 使用随机测速地址，避免对单个测速源造成负担。
 
 ```yaml
 # 100MB

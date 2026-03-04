@@ -40,10 +40,12 @@ export HTTP_PROXY=socks5h://username:password@192.168.1.1:7890
 export HTTPS_PROXY=socks5h://username:password@192.168.1.1:7890
 ```
 
-如果想加速 GitHub 的链接，可使用公开的 GitHub Proxy，或自建加速（参考 Speedtest 文档里的 worker.js 示例）。
+如果想加速github的链接，可使用网上公开的github proxy
+
+可使用 GitHub 项目 [CF-Proxy](https://github.com/sinspired/CF-Proxy) 自建 GitHub 代理，可直接复制 [worker.js](https://github.com/sinspired/CF-Proxy/blob/main/worker.js) 到 [Cloudflare](https://dash.cloudflare.com/) 的 workers。
 
 ```yaml
 # Github Proxy，获取订阅使用，结尾要带的 /
 # github-proxy: "https://ghfast.top/"
-github-proxy: "https://custom-domain/raw/"
+github-proxy: "https://proxy.custom-domain/"
 ```
