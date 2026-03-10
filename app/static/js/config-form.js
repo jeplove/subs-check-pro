@@ -748,8 +748,8 @@ export function initConfigForm() {
         _pendingSlot = 'right';
       }
     } else {
-      const slot = _pendingSlot
-        ?? (_leftTab === null ? 'left' : null)
+      const slot = (_leftTab === null ? 'left' : null)
+        ?? _pendingSlot
         ?? (_rightTab === null ? 'right' : null)
         ?? 'right';
 
