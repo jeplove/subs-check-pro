@@ -391,13 +391,22 @@
             gap: 14px;
         }
 
-        .footer-icon  { width: 15px; height: 15px; opacity: 0.6; transition: opacity 0.15s; display: block; filter: invert(var(--invert)); }
+        .footer-icon {
+            width: 15px;
+            height: 15px;
+            opacity: 0.6;
+            transition: opacity 0.15s;
+            display: block;
+            filter: invert(var(--invert));
+        }
 
         .footer-icons a:hover .footer-icon {
             opacity: 0.85;
         }
 
-        .footer-icon:hover { transform: scale(1.15); }
+        .footer-icon:hover {
+            transform: scale(1.15);
+        }
 
         .footer-copy {
             font-size: 11px;
@@ -558,7 +567,7 @@
                         <span class="file-name">{{ .Name }}</span>
                         <span class="file-path">{{ .Route }}</span>
                     </a>
-                    <button class="copy-btn" title="复制链接" data-route="{{ .Route }}" onclick="copyRoute(this)">
+                    <button class="copy-btn" title="复制链接" data-route="{{ .Route }}" onclick="copyItem(this)">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                             stroke-linecap="round" stroke-linejoin="round">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -583,9 +592,12 @@
 
     <div class="footer-outsie">
         <div class="footer-icons">
-            <a href="https://github.com/sinspired/subs-check-pro" title="GitHub"><img src="/static/icon/github.svg" alt="GitHub" class="footer-icon"/></a>
-            <a href="https://hub.docker.com/r/sinspired/subs-check-pro" title="Docker"><img src="/static/icon/docker.svg" alt="Docker" class="footer-icon"/></a>
-            <a href="https://t.me/subs_check_pro" title="Telegram"><img src="/static/icon/telegram.svg" alt="Telegram" class="footer-icon"/></a>
+            <a href="https://github.com/sinspired/subs-check-pro" title="GitHub"><img src="/static/icon/github.svg"
+                    alt="GitHub" class="footer-icon" /></a>
+            <a href="https://hub.docker.com/r/sinspired/subs-check-pro" title="Docker"><img
+                    src="/static/icon/docker.svg" alt="Docker" class="footer-icon" /></a>
+            <a href="https://t.me/subs_check_pro" title="Telegram"><img src="/static/icon/telegram.svg" alt="Telegram"
+                    class="footer-icon" /></a>
         </div>
         <div class="footer-copy">
             © 2025 <a href="https://github.com/sinspired" target="_blank" rel="noopener">sinspired</a> ·
@@ -619,16 +631,55 @@
         applyTheme(savedTheme);
 
         // ── 复制公共文件直链 ──────────────────────────────────────
-        function copyRoute(btn) {
-            const url = window.location.origin + btn.dataset.route;
-            navigator.clipboard.writeText(url).then(() => {
-                const original = btn.innerHTML;
-                btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"/></svg>`;
-                btn.style.color = 'var(--success)';
-                setTimeout(() => { btn.innerHTML = original; btn.style.color = ''; }, 2000);
-            }).catch(() => { prompt('请手动复制：', url); });
+        // ── 复制订阅链接（通过 data-* 属性取值，安全无注入） ─────
+        function copyItem(btn) {
+            const name = btn.dataset.name;
+            const code = btn.dataset.code;
+            const url = window.location.origin
+                + (code ? '/sub/' + encodeURIComponent(code) + '/' : '/more/')
+                + encodeURIComponent(name);
+
+            // 优先使用 Clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(url).then(() => {
+                    showSuccess(btn);
+                }).catch(() => {
+                    fallbackCopy(url, btn);
+                });
+            } else {
+                // 非 HTTPS 或不支持 clipboard 时，走降级方案
+                fallbackCopy(url, btn);
+            }
+        }
+
+        function fallbackCopy(text, btn) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed'; // 避免滚动影响
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showSuccess(btn);
+            } catch (err) {
+                prompt('请手动复制链接：', text);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        function showSuccess(btn) {
+            const original = btn.innerHTML;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+    </svg>`;
+            btn.style.color = 'var(--success)';
+            setTimeout(() => {
+                btn.innerHTML = original;
+                btn.style.color = '';
+            }, 2000);
         }
     </script>
     <script type="module" src="/static/js/admin.js"></script>

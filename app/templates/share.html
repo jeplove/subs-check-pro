@@ -475,22 +475,47 @@
                 + (code ? '/sub/' + encodeURIComponent(code) + '/' : '/more/')
                 + encodeURIComponent(name);
 
-            navigator.clipboard.writeText(url).then(() => {
-                const original = btn.innerHTML;
-                // 临时替换为对勾图标，2s 后恢复
-                btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"/>
-            </svg>`;
-                btn.style.color = 'var(--success)';
-                setTimeout(() => {
-                    btn.innerHTML = original;
-                    btn.style.color = '';
-                }, 2000);
-            }).catch(() => {
-                // 降级方案：选中文本提示用户手动复制
-                prompt('请手动复制链接：', url);
-            });
+            // 优先使用 Clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(url).then(() => {
+                    showSuccess(btn);
+                }).catch(() => {
+                    fallbackCopy(url, btn);
+                });
+            } else {
+                // 非 HTTPS 或不支持 clipboard 时，走降级方案
+                fallbackCopy(url, btn);
+            }
+        }
+
+        function fallbackCopy(text, btn) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed'; // 避免滚动影响
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showSuccess(btn);
+            } catch (err) {
+                prompt('请手动复制链接：', text);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        function showSuccess(btn) {
+            const original = btn.innerHTML;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+    </svg>`;
+            btn.style.color = 'var(--success)';
+            setTimeout(() => {
+                btn.innerHTML = original;
+                btn.style.color = '';
+            }, 2000);
         }
     </script>
     <script type="module" src="/static/js/admin.js"></script>
