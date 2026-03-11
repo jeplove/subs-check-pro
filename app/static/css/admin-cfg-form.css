@@ -1,4 +1,4 @@
-/* admin-cfg-form.css  v3 */
+/* admin-cfg-form.css  v4 */
 
 /* ════════════════════════════════════════════════════════════
    标题区：齿轮图标 + "配置" 文字
@@ -80,7 +80,7 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
-/* YAML 模式激活态 — 用 accent 色区分，与表单的 fg 形成对比 */
+/* YAML 模式激活态 */
 .cfg-mode-btn.active-yaml {
   background: color-mix(in srgb, var(--accent) 10%, var(--bg));
   color: var(--accent);
@@ -99,26 +99,18 @@
   animation: splitPulse 0.3s ease-out;
 }
 
-/* 小屏隐藏文字时，分隔线也自动隐藏 */
-@media (max-width: 540px) {
-  #splitDivider {
-    display: none !important;
-  }
-}
-
 @keyframes splitPulse {
-  0% {
-    transform: scaleX(1);
-  }
-  50% {
-    transform: scaleX(1.18);
-  }
-  100% {
-    transform: scaleX(1);
-  }
+  0%   { transform: scaleX(1); }
+  50%  { transform: scaleX(1.18); }
+  100% { transform: scaleX(1); }
 }
 
+/* ════════════════════════════════════════════════════════════
+   小屏（≤540px）适配
+   ── 合并后的单一 @media 块 ──
+════════════════════════════════════════════════════════════ */
 @media (max-width: 540px) {
+  /* 隐藏文字标签，仅保留图标 */
   .cfg-mode-btn span {
     display: none;
   }
@@ -126,12 +118,18 @@
     padding: 3px 6px;
     gap: 0;
   }
+  /* 胶囊内分隔线收紧 */
   .cfg-mode-seg .seg-divider {
     margin: 0 1px;
   }
+  /* 标题区收紧 */
   .title-with-icon {
     padding-right: 6px;
     margin-right: 1px;
+  }
+  /* 双栏分隔线在小屏隐藏 */
+  #splitDivider {
+    display: none !important;
   }
 }
 
@@ -168,7 +166,6 @@
   overflow-x: auto;
   scrollbar-width: none;
   flex-shrink: 0;
-  /* background: color-mix(in srgb, var(--fg) 2.5%, var(--bg)); */
   background: var(--gutter-bg);
 }
 .cfg-tab-bar::-webkit-scrollbar {
@@ -232,11 +229,9 @@
   overflow-y: auto;
   overflow-x: hidden;
   margin: 0 -12px -12px;
-  /* 留出滚动条位置，避免右侧空白过多 */
   padding: 0 6px 14px 14px;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--border) 80%, transparent)
-    transparent;
+  scrollbar-color: color-mix(in srgb, var(--border) 80%, transparent) transparent;
   background: transparent;
   border-radius: 0 0 12px 12px;
   box-shadow: inset 0 0 12px var(--edit-shadow, rgba(0, 0, 0, 0.06));
@@ -245,10 +240,6 @@
 .cfg-panels-wrap:hover {
   box-shadow: inset 0 0 12px var(--edit-shadow-hover, rgba(0, 0, 0, 0.1));
 }
-
-.cfg-panels-wrap:focus {
-  box-shadow: inset 0 0 8px var(--accent-light);
-}
 .cfg-panels-wrap::-webkit-scrollbar {
   width: 4px;
 }
@@ -256,7 +247,6 @@
   background: color-mix(in srgb, var(--scroll-bg) 80%, transparent);
   border-radius: 4px;
 }
-
 .cfg-panels-wrap::-webkit-scrollbar-thumb:hover {
   background-color: var(--accent);
 }
@@ -283,7 +273,6 @@
   .cfg-panels-wrap.split-mode .cfg-panel.active-right {
     border-left: 1px solid var(--border);
   }
-  /* 单栏：面板铺满容器，不限制最大宽度 */
   .cfg-panels-wrap:not(.split-mode) .cfg-panel.active {
     width: 100%;
   }
@@ -319,9 +308,7 @@
   animation: cfg-spin 1s linear infinite;
 }
 @keyframes cfg-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -356,19 +343,14 @@
 
 /* ════════════════════════════════════════════════════════════
    字段行
-   ─────────────────────────────────────────────────────────
-   修复：
-   · 统一 border-radius 为 6px（去掉悬停时的跳变）
-   · 增大水平 padding，与左侧 accent 竖线视觉呼吸
-   · 悬停时轻微内缩 margin 产生"浮起"感
 ════════════════════════════════════════════════════════════ */
 .cfg-field {
   display: grid;
   grid-template-columns: 1fr 1.15fr;
   column-gap: 10px;
-  row-gap: 1px; /* 3px → 1px，label 与 hint 更紧凑 */
+  row-gap: 1px;
   align-items: center;
-  padding: 6px 8px 6px 10px; /* 上下 8px → 6px */
+  padding: 6px 8px 6px 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
   border-radius: 6px;
   transition: background 0.12s, margin 0.12s, padding 0.12s;
@@ -378,12 +360,11 @@
 }
 .cfg-field:hover {
   background: color-mix(in srgb, var(--accent) 4.5%, transparent);
-  /* 悬停时视觉稍微内缩，营造"卡片"呼吸感 */
   margin: 0 -2px;
-  padding: 6px 8px 6px 10px; /* 与上方对齐 */
+  padding: 6px 8px 6px 10px;
 }
 
-/* ── 普通字段：cfg-label-col（col1/row1）── */
+/* ── 普通字段标签列 ── */
 .cfg-label-col {
   grid-column: 1;
   grid-row: 1;
@@ -395,8 +376,6 @@
   align-self: center;
 }
 .cfg-label-col .cfg-label-text {
-  grid-column: unset;
-  grid-row: unset;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -404,8 +383,6 @@
   max-width: 100%;
 }
 .cfg-label-col .cfg-links {
-  grid-column: unset;
-  grid-row: unset;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -424,24 +401,22 @@
 .cfg-field:not(.full-width) .cfg-label-hint {
   grid-column: 1 / -1;
   grid-row: 2;
-  font-size: 10.5px; /* 11px → 10.5px */
+  font-size: 10.5px;
   color: var(--muted);
   line-height: 1.35;
   opacity: 0.85;
 }
-
 .cfg-field:not(.full-width) .cfg-inline-hint {
   grid-column: 1 / -1;
   grid-row: 3;
 }
 
-/* ── 全宽字段 ─────────────────────────────────────────── */
+/* ── 全宽字段 ── */
 .cfg-field.full-width {
   grid-template-columns: 1fr;
   row-gap: 4px;
   align-items: start;
 }
-
 .cfg-field.full-width .cfg-label-text {
   grid-row: 1;
   grid-column: 1;
@@ -506,37 +481,37 @@
   max-width: 500px;
 }
 
-/* 选择器 / 文本框 / 密码框：保持 width:100%，仅限制上限 */
+/* 选择器 / 文本框 / 密码框 */
 .cfg-ctrl .cfg-sel-wrap,
 .cfg-field:not(.full-width) .cfg-ctrl .cfg-input,
 .cfg-field:not(.full-width) .cfg-ctrl .cfg-pw-wrap {
   min-width: 120px;
   max-width: 500px;
-  /* width: 100% 已在各自规则中设置，此处不覆盖 */
 }
 
 /* 单栏宽屏：统一收缩到 50% */
 @media (min-width: 900px) {
-  .cfg-panels-wrap:not(.split-mode)
-    .cfg-field:not(.full-width)
-    .cfg-ctrl
-    .cfg-number-wrap,
-  .cfg-panels-wrap:not(.split-mode)
-    .cfg-field:not(.full-width)
-    .cfg-ctrl
-    .cfg-sel-wrap,
-  .cfg-panels-wrap:not(.split-mode)
-    .cfg-field:not(.full-width)
-    .cfg-ctrl
-    .cfg-input,
-  .cfg-panels-wrap:not(.split-mode)
-    .cfg-field:not(.full-width)
-    .cfg-ctrl
-    .cfg-pw-wrap {
+  .cfg-panels-wrap:not(.split-mode) .cfg-field:not(.full-width) .cfg-ctrl .cfg-number-wrap,
+  .cfg-panels-wrap:not(.split-mode) .cfg-field:not(.full-width) .cfg-ctrl .cfg-sel-wrap,
+  .cfg-panels-wrap:not(.split-mode) .cfg-field:not(.full-width) .cfg-ctrl .cfg-input,
+  .cfg-panels-wrap:not(.split-mode) .cfg-field:not(.full-width) .cfg-ctrl .cfg-pw-wrap {
     max-width: clamp(120px, 50%, 500px);
   }
 }
 
+/* ════════════════════════════════════════════════════════════
+   禁用字段（Cron 合法时的检测间隔行）
+════════════════════════════════════════════════════════════ */
+.cfg-field--muted {
+  opacity: 0.38;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.2s ease;
+}
+
+/* ════════════════════════════════════════════════════════════
+   数字步进器
+════════════════════════════════════════════════════════════ */
 .cfg-number-wrap {
   display: flex;
   align-items: center;
@@ -602,7 +577,8 @@
   font-family: inherit;
   outline: none;
   min-width: 0;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s, color 0.15s;
+  letter-spacing: 1px;
 }
 .cfg-input:focus {
   border-color: var(--accent-light);
@@ -611,6 +587,52 @@
 .cfg-input::placeholder {
   color: var(--muted);
   opacity: 0.5;
+}
+
+/* ════════════════════════════════════════════════════════════
+   特殊保留值输入框高亮
+   触发条件：speed-test-url = "random" | system-proxy = "direct"
+════════════════════════════════════════════════════════════ */
+
+/* 包裹容器：flex 横排，右侧放徽章 */
+.cfg-special-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.cfg-special-wrap .cfg-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 输入框高亮态 */
+.cfg-input--special {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--input-bg));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  font-weight: 600;
+}
+.cfg-input--special:focus {
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* 保留值徽章 */
+.cfg-special-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+  white-space: nowrap;
+  cursor: default;
+  animation: hintFadeIn 0.15s ease-out;
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -724,14 +746,8 @@
   animation: selDropIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes selDropIn {
-  from {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .cfg-sel-option {
   padding: 8px 12px;
@@ -743,15 +759,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cfg-sel-option:first-child {
-  border-radius: 10px 10px 0 0;
-}
-.cfg-sel-option:last-child {
-  border-radius: 0 0 10px 10px;
-}
-.cfg-sel-option:only-child {
-  border-radius: 10px;
-}
+.cfg-sel-option:first-child { border-radius: 10px 10px 0 0; }
+.cfg-sel-option:last-child  { border-radius: 0 0 10px 10px; }
+.cfg-sel-option:only-child  { border-radius: 10px; }
 .cfg-sel-option:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
@@ -944,7 +954,6 @@
   flex-wrap: wrap;
   gap: 5px;
 }
-
 .cfg-link {
   display: inline-flex;
   align-items: center;
@@ -994,14 +1003,8 @@
   animation: hintFadeIn 0.18s ease-out;
 }
 @keyframes hintFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .cfg-inline-hint svg {
   width: 12px;
@@ -1029,6 +1032,36 @@
 }
 
 /* ════════════════════════════════════════════════════════════
+   Cron 定时计划启用徽标
+   · 默认隐藏（display:none）
+   · .cfg-cron-badge--active 时显示（display:flex）
+   · 插入位置：Cron 表达式字段行之后、检测间隔字段行之前
+════════════════════════════════════════════════════════════ */
+.cfg-cron-badge {
+  display: none;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 10px 4px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--success, #22c55e);
+  background: color-mix(in srgb, var(--success, #22c55e) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success, #22c55e) 25%, transparent);
+  animation: hintFadeIn 0.18s ease-out;
+}
+.cfg-cron-badge--active {
+  display: flex;
+}
+.cfg-cron-badge svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  stroke: var(--success, #22c55e);
+}
+
+/* ════════════════════════════════════════════════════════════
    存储条件分组
 ════════════════════════════════════════════════════════════ */
 .cfg-cond-group {
@@ -1053,14 +1086,8 @@
   animation: pvSlideIn 0.18s cubic-bezier(0.22, 0.68, 0, 1.2) both;
 }
 @keyframes pvSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .pv-header {
   display: flex;
@@ -1205,38 +1232,20 @@
   text-overflow: ellipsis;
   max-width: 140px;
 }
-.pv-v.ok {
-  color: var(--success, #22c55e);
-}
-.pv-v.warn {
-  color: var(--warning, #f59e0b);
-}
-.pv-v.info {
-  color: var(--accent, #3b82f6);
-}
-.pv-v.muted {
-  color: var(--muted);
-  opacity: 0.6;
-}
+.pv-v.ok    { color: var(--success, #22c55e); }
+.pv-v.warn  { color: var(--warning, #f59e0b); }
+.pv-v.info  { color: var(--accent, #3b82f6); }
+.pv-v.muted { color: var(--muted); opacity: 0.6; }
 .pv-status-icon {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
   stroke-width: 2.5;
 }
-.pv-status-icon.ok {
-  color: var(--success, #22c55e);
-}
-.pv-status-icon.warn {
-  color: var(--warning, #f59e0b);
-}
-.pv-status-icon.info {
-  color: var(--accent, #3b82f6);
-}
-.pv-status-icon.muted {
-  color: var(--muted);
-  opacity: 0.5;
-}
+.pv-status-icon.ok    { color: var(--success, #22c55e); }
+.pv-status-icon.warn  { color: var(--warning, #f59e0b); }
+.pv-status-icon.info  { color: var(--accent, #3b82f6); }
+.pv-status-icon.muted { color: var(--muted); opacity: 0.5; }
 .pv-footer {
   display: flex;
   align-items: center;
@@ -1272,10 +1281,8 @@
     gap: 2px;
     margin: 2px -12px 0;
     padding: 6px 12px 8px;
-    /* background: color-mix(in srgb, var(--fg) 2.5%, var(--bg)); */
     background: var(--gutter-bg);
   }
-
   .cfg-tab {
     gap: 4px;
     padding: 2px 8px;

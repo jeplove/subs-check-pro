@@ -28,7 +28,7 @@ const SCHEMA = [
           { key: 'concurrent', label: '基准线程', type: 'number', min: 1, max: 100, placeholder: '20', hint: '影响获取订阅任务，最大 100' },
           { key: 'sub-urls-retry', label: '重试次数', type: 'number', min: 1, max: 5, placeholder: '3', hint: '获取订阅失败后的重试次数' },
           { key: 'sub-urls-timeout', label: '请求超时 (s)', type: 'number', min: 5, max: 60, placeholder: '10', hint: '网络差可调大，建议 10–60' },
-          { key: 'success-rate', label: '成功率阈值 (%)', type: 'number', min: 0, max: 100, placeholder: '0', hint: '低于此值将把订阅标记为失效' },
+          { key: 'success-rate', label: '成功率阈值 (%)', type: 'number', min: 0.01, max: 100, placeholder: '0', hint: '低于此值将把订阅标记为失效（存储值 0–1，界面显示 0–100%）' },
         ],
       },
       {
@@ -166,7 +166,7 @@ const SCHEMA = [
           {
             key: 'system-proxy', label: '系统代理', type: 'text', fullWidth: true,
             placeholder: 'http://127.0.0.1:10808',
-            hint: '用于拉取订阅和推送通知；留空则自动检测；修改需重启',
+            hint: '用于拉取订阅和推送通知；direct = 强制直连不使用代理；留空则自动检测；修改需重启',
           },
           {
             key: 'github-proxy', label: 'GitHub 代理', type: 'text', fullWidth: true,
@@ -324,6 +324,51 @@ const FIELD_VALIDATORS = {
   'download-timeout': v => { if (Number(v) === 0) return { level: 'warn', msg: '未设置，极慢节点会阻塞测速队列，建议设为 10s' }; return null; },
   'download-mb': v => { if (Number(v) === 0) return { level: 'info', msg: '未限制单节点下载量，高并发时可能消耗大量流量，建议 20 MB' }; return null; },
   'success-limit': v => { const n = Number(v); if (n > 0 && n < 30) return { level: 'info', msg: `保存上限 ${n} 较少，建议 ≥ 100` }; return null; },
+    /* success-rate 校验：入参为界面显示值（0–100%），存储值为其 ÷100 */
+  'success-rate': v => {
+    const n = Number(v);
+    if (n === 0) return { level: 'info', msg: '0 = 不过滤，所有订阅均保留' };
+    if (n > 0 && n < 5) return { level: 'info', msg: `阈值 ${n}% 极低，仅过滤几乎完全失效的订阅源` };
+    if (n > 80) return { level: 'warn', msg: `阈值 ${n}% 过高，可能误删大量正常订阅` };
+    return null;
+  },
+};
+
+
+/* ═══════════════════════════ 字段值双向变换 ═══════════════════════════
+ * load : 从配置对象 → 界面显示值
+ * save : 从界面显示值 → 配置对象
+ * ─────────────────────────────────────────────────────────────────── */
+const VALUE_TRANSFORM = {
+  /**
+   * success-rate：后端存 0–1（如 0.5），界面显示 0–100（如 50%）
+   *   load: 0.5  → 50
+   *   save: 50   → 0.5
+   */
+  'success-rate': {
+    load: v => {
+      if (v == null || v === '') return v;
+      return +(Number(v) * 100).toFixed(4);   // 0.03 → 3.0（避免浮点尾巴）
+    },
+    save: v => {
+      const n = parseFloat(v);
+      if (isNaN(n)) return 0;
+      return +(n / 100).toFixed(6);            // 3 → 0.03
+    },
+  },
+};
+
+
+/* ═══════════════════════════ 特殊保留值定义 ═══════════════════════════
+ * 当文本框的值与列表中某项完全匹配时，显示高亮样式 + 标签徽章。
+ * ─────────────────────────────────────────────────────────────────── */
+const SPECIAL_INPUT_VALUES = {
+  'speed-test-url': [
+    { value: 'random', label: '随机测速', hint: '从内置地址列表随机选择测速目标' },
+  ],
+  'system-proxy': [
+    { value: 'direct', label: '直连', hint: '强制直连，不使用任何系统代理' },
+  ],
 };
 
 
@@ -400,6 +445,9 @@ const LINK_ICONS = {
 const _SVG_EYE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const _SVG_EYE_OFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 
+/* Cron 状态徽标用的时钟图标 */
+const _SVG_CLOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+
 /* 模式切换按钮：表单 / YAML 的 SVG 内容 */
 const _SVG_MODE_FORM = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" style="flex-shrink:0"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg>`;
 const _SVG_MODE_YAML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" style="flex-shrink:0"><polyline points="7 8 3 12 7 16"/><line x1="13" y1="6" x2="11" y2="18"/><polyline points="17 8 21 12 17 16"/></svg>`;
@@ -440,10 +488,42 @@ function mkPassword(field, value) {
   return wrap;
 }
 
+/**
+ * mkInput — 文本输入框
+ * 若字段在 SPECIAL_INPUT_VALUES 中定义，则在值匹配保留值时：
+ *   · 输入框添加 .cfg-input--special 高亮样式
+ *   · 右侧显示小徽章（如"随机测速"/"直连"）
+ */
 function mkInput(field, value) {
   if (field.type === 'password') return mkPassword(field, value);
   const inp = el('input', { class: 'cfg-input', type: 'text', 'data-key': field.key, placeholder: field.placeholder ?? '' });
   inp.value = value ?? '';
+
+    const specialDefs = SPECIAL_INPUT_VALUES[field.key];
+  if (!specialDefs) return inp;
+
+  /* ── 含特殊值定义：包裹一层 flex 容器，右侧插入徽章 ── */
+  const wrap = el('div', { class: 'cfg-special-wrap' });
+  const badge = el('span', { class: 'cfg-special-badge' });
+  badge.style.display = 'none';
+  wrap.append(inp, badge);
+
+  const checkSpecial = () => {
+    const v = inp.value.trim();
+    const spec = specialDefs.find(s => s.value === v);
+    inp.classList.toggle('cfg-input--special', !!spec);
+    if (spec) {
+      badge.textContent = spec.label;
+      badge.title = spec.hint;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  };
+
+  inp.addEventListener('input', checkSpecial);
+  requestAnimationFrame(checkSpecial);
+
   return inp;
 }
 
@@ -578,6 +658,10 @@ function mkUrlList(field, values) {
    字段行构建
 ═══════════════════════════════════════════════════════════════ */
 function mkField(fieldDef, value) {
+    /* 应用加载时的值变换（如 success-rate ×100） */
+  const xf = VALUE_TRANSFORM[fieldDef.key];
+  const displayValue = xf ? xf.load(value) : value;
+
   const isFull = fieldDef.type === 'url-list' || fieldDef.type === 'chips' || !!fieldDef.fullWidth;
   const row = el('div', { class: `cfg-field${isFull ? ' full-width' : ''}`, 'data-key': fieldDef.key });
 
@@ -594,12 +678,12 @@ function mkField(fieldDef, value) {
   if (fieldDef.ctrlWidth) ctrlWrap.style.maxWidth = fieldDef.ctrlWidth;
   let ctrl;
   switch (fieldDef.type) {
-    case 'number': ctrl = mkNumber(fieldDef, value); break;
-    case 'toggle': ctrl = mkToggle(fieldDef.key, value); break;
-    case 'select': ctrl = mkSelect(fieldDef, value); break;
-    case 'chips': ctrl = mkChips(fieldDef, value); break;
-    case 'url-list': ctrl = mkUrlList(fieldDef, value); break;
-    default: ctrl = mkInput(fieldDef, value); break;
+    case 'number':   ctrl = mkNumber(fieldDef, displayValue); break;
+    case 'toggle':   ctrl = mkToggle(fieldDef.key, displayValue); break;
+    case 'select':   ctrl = mkSelect(fieldDef, displayValue); break;
+    case 'chips':    ctrl = mkChips(fieldDef, displayValue); break;
+    case 'url-list': ctrl = mkUrlList(fieldDef, displayValue); break;
+    default:         ctrl = mkInput(fieldDef, displayValue); break;
   }
   ctrlWrap.appendChild(ctrl);
   row.appendChild(ctrlWrap);
@@ -609,6 +693,54 @@ function mkField(fieldDef, value) {
 
   _attachValidator(row, fieldDef);
   return row;
+}
+
+/* ═══════════════════════════ Cron 表达式校验 ═══════════════════════════
+ * 简单验证：5 个字段，每个字段仅含 数字  字符
+ * 满足绝大多数 Unix cron 格式（含步进、范围、列表）
+ * ─────────────────────────────────────────────────────────────────── */
+function _isValidCron(expr) {
+  if (!expr?.trim()) return false;
+  const parts = expr.trim().split(/\s+/);
+  return parts.length === 5 && parts.every(p => p.length > 0 && /^[0-9*,\-/]+$/.test(p));
+}
+
+
+/* ═══════════════════════════ Cron ↔ 检测间隔联动 ═══════════════════════
+ * 在 schedule 面板构建完成后调用。
+ * · Cron 合法 → 在 Cron 字段下方显示"定时计划已启用"徽标
+ *               → 检测间隔字段视觉禁用（pointer-events:none + opacity）
+ * · Cron 为空或非法 → 徽标隐藏，检测间隔恢复可用
+ * · 徽标仅 UI 展示，不写入配置
+ * ─────────────────────────────────────────────────────────────────── */
+function _bindCronInterval(panel) {
+  const cronRow      = panel.querySelector('.cfg-field[data-key="cron-expression"]');
+  const intervalRow  = panel.querySelector('.cfg-field[data-key="check-interval"]');
+  if (!cronRow || !intervalRow) return;
+
+  const cronInput = cronRow.querySelector('input[data-key="cron-expression"]');
+  if (!cronInput) return;
+
+  /* 徽标：插在 Cron 行与检测间隔行之间 */
+  const badge = el('div', { class: 'cfg-cron-badge' });
+  badge.innerHTML = `${_SVG_CLOCK}<span>定时计划已启用 · 检测间隔不生效</span>`;
+  cronRow.after(badge);
+
+  /* 需要禁用的控件：数字输入框 + 步进按钮 */
+  const intervalControls = [
+    ...intervalRow.querySelectorAll('input[type="number"]'),
+    ...intervalRow.querySelectorAll('button.cfg-step-btn'),
+  ];
+
+  function update() {
+    const valid = _isValidCron(cronInput.value);
+    badge.classList.toggle('cfg-cron-badge--active', valid);
+    intervalRow.classList.toggle('cfg-field--muted', valid);
+    intervalControls.forEach(c => { c.disabled = valid; });
+  }
+
+  cronInput.addEventListener('input', update);
+  requestAnimationFrame(update);
 }
 
 
@@ -629,6 +761,8 @@ function buildPanel(tabId) {
       sec.fields.forEach(f => panel.appendChild(mkField(f, _cfg[f.key])));
     }
   }
+
+    /* 存储：条件分组切换 */
   if (tabId === 'storage') {
     const sel = panel.querySelector('select.cfg-select-native[data-key="save-method"]');
     if (sel) {
@@ -639,6 +773,12 @@ function buildPanel(tabId) {
       sync(sel.value);
     }
   }
+  
+  /* 任务：Cron ↔ 检测间隔联动 */
+  if (tabId === 'schedule') {
+    _bindCronInterval(panel);
+  }
+  
   _built.add(tabId);
 }
 
@@ -990,11 +1130,41 @@ function collectPanel(tabId) {
       const { key, type } = field;
       switch (type) {
         case 'toggle': { const cb = panel.querySelector(`input[type="checkbox"][data-key="${key}"]`); if (cb) out[key] = cb.checked; break; }
-        case 'number': { const inp = panel.querySelector(`input[type="number"][data-key="${key}"]`); if (inp) { const v = parseFloat(inp.value); out[key] = isNaN(v) ? 0 : v; } break; }
-        case 'select': { const sel = panel.querySelector(`select.cfg-select-native[data-key="${key}"]`); if (sel) out[key] = field.numericOptions ? parseFloat(sel.value) : sel.value; break; }
-        case 'chips': { const w = panel.querySelector(`.cfg-chips[data-key="${key}"]`); if (w) out[key] = Array.from(w.querySelectorAll('input:checked')).map(c => c.value); break; }
-        case 'url-list': { const w = panel.querySelector(`.cfg-url-list[data-key="${key}"]`); if (w) out[key] = Array.from(w.querySelectorAll('.cfg-url-item input')).map(i => i.value.trim()).filter(Boolean); break; }
-        default: { const inp = panel.querySelector(`input[data-key="${key}"]`); if (inp) out[key] = inp.value; break; }
+        case 'number': {
+          const inp = panel.querySelector(`input[type="number"][data-key="${key}"]`);
+          if (inp) {
+            /* 应用保存时的值变换（如 success-rate ÷100） */
+            const xf = VALUE_TRANSFORM[key];
+            if (xf) {
+              out[key] = xf.save(inp.value);
+            } else {
+              const v = parseFloat(inp.value);
+              out[key] = isNaN(v) ? 0 : v;
+            }
+          }
+          break;
+        }
+        case 'select': {
+          const sel = panel.querySelector(`select.cfg-select-native[data-key="${key}"]`);
+          if (sel) out[key] = field.numericOptions ? parseFloat(sel.value) : sel.value;
+          break;
+        }
+        case 'chips': {
+          const w = panel.querySelector(`.cfg-chips[data-key="${key}"]`);
+          if (w) out[key] = Array.from(w.querySelectorAll('input:checked')).map(c => c.value);
+          break;
+        }
+        case 'url-list': {
+          const w = panel.querySelector(`.cfg-url-list[data-key="${key}"]`);
+          if (w) out[key] = Array.from(w.querySelectorAll('.cfg-url-item input')).map(i => i.value.trim()).filter(Boolean);
+          break;
+        }
+        default: {
+          /* text / password：input[data-key] 在 cfg-special-wrap 内也能查到 */
+          const inp = panel.querySelector(`input[data-key="${key}"]`);
+          if (inp) out[key] = inp.value;
+          break;
+        }
       }
     }
   }
