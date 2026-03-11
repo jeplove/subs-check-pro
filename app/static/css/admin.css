@@ -69,6 +69,7 @@
   --danger: #dc2626;
   --muted: #9aa4b2;
   --muted-hard: rgba(71, 70, 70, 0.8);
+  --prepare: #38bdf8;
 
   --input-bg: rgba(0, 0, 0, 0.2);
   --logs-bg: rgba(0, 0, 0, 0.2);
@@ -631,17 +632,24 @@ main {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+  color: var(--prepare);
+  background-color: color-mix(in srgb, var(--prepare) 10%, transparent);
+  border-color: color-mix(in srgb, var(--prepare) 20%, transparent);
+}
+
 /* icon 样式：适配SVG */
 .toggle-btn .btn-icon {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 30px;
-  /* 匹配原font-size */
-  height: 30px;
-  color: white;
-  /* currentColor继承此色 */
+  width: 28px;
+  height: 28px;
+  color: currentColor; /* 继承按钮自身的 color，由各状态各自控制 */
   transition: color 0.2s ease;
 }
 
@@ -658,9 +666,11 @@ main {
   color: #fff;
 }
 
-.toggle-btn.state-idle:hover:not(:disabled) .btn-icon {
+.toggle-btn.state-idle:hover:not(:disabled) {
   color: var(--success);
   /* SVG继承，hover高亮 */
+  background: color-mix(in srgb, var(--success) 5%, transparent);
+  border-color: color-mix(in srgb, var(--success) 100%, transparent);
 }
 
 .toggle-btn.state-checking {
@@ -668,22 +678,13 @@ main {
   color: #fff;
 }
 
-.toggle-btn.state-checking:hover:not(:disabled) .btn-icon {
+.toggle-btn.state-checking:hover:not(:disabled) {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 5%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
-.toggle-btn.state-preparing .btn-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--prepare);
-}
-
-.toggle-btn.state-preparing:hover:not(:disabled) .btn-icon {
-  color: #fff;
-}
-
-.toggle-btn.state-starting,
-.toggle-btn.state-stopping {
+.toggle-btn.state-starting {
   background: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0.04),
@@ -701,10 +702,33 @@ main {
   background-color: transparent;
 }
 
-.toggle-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-  transform: none;
+/* 正在终止 */
+.toggle-btn.state-stoping .btn-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--stoping);
+}
+.toggle-btn:disabled .btn-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* 准备中 */
+.toggle-btn.state-preparing {
+  background: color-mix(in srgb, var(--prepare) 5%, transparent);
+  border-color: color-mix(in srgb, var(--prepare) 10%, transparent);
+}
+.toggle-btn.state-preparing .btn-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--prepare);
+}
+.toggle-btn.state-preparing:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--prepare) 10%, transparent);
+  border-color: color-mix(in srgb, var(--prepare) 20%, transparent);
+}
+.toggle-btn.state-preparing:hover:not(:disabled) .btn-icon {
+  color: var(--prepare);
 }
 
 /* 进度信息 */
@@ -1215,7 +1239,7 @@ main {
   font-size: 12px;
   background: transparent;
   color: var(--muted);
- line-height: 1.4;
+  line-height: 1.4;
 }
 
 .status-idle {
@@ -2123,9 +2147,7 @@ main {
     text-decoration: underline;
     /* 悬停时加下划线，提示可点击 */
   }
-}
 
-@media (max-width: 899px) {
   /* 编辑器 */
   #configEditor,
   .cm-editor {
