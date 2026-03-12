@@ -162,9 +162,25 @@ func (app *App) initConfigWatcher() error {
 						oldCronCheckUpdateExpr := config.GlobalConfig.CronCheckUpdate
 						oldSubStorePath := config.GlobalConfig.SubStorePath
 
+						oldSubStorePort := config.GlobalConfig.SubStorePort
+
 						if err := app.loadConfig(); err != nil {
 							slog.Error(fmt.Sprintf("重新加载配置文件失败: %v", err))
 							return
+						}
+
+						// 去掉开头的冒号，统一格式
+						subStorePort := strings.TrimPrefix(config.GlobalConfig.SubStorePort, ":")
+						listenPort := strings.TrimPrefix(config.GlobalConfig.ListenPort, ":")
+
+						// 校验两个端口不能相同
+						if subStorePort != "" && listenPort != "" && subStorePort == listenPort {
+							slog.Error("SubStore端口 与 WebUI端口 冲突，请修改配置",
+								"ListenPort", listenPort,
+								"SubStorePort", subStorePort,
+							)
+							slog.Error("SubStore 服务因端口冲突禁用，请修改端口配置")
+							config.GlobalConfig.SubStorePort = ""
 						}
 
 						if config.GlobalConfig.APIKey == "" {
@@ -178,6 +194,22 @@ func (app *App) initConfigWatcher() error {
 									config.GlobalConfig.APIKey = geneAPIKey
 									slog.Debug("保留首次运行自动生成的API key", "api-key", config.GlobalConfig.APIKey)
 								}
+							}
+						}
+
+						if oldSubStorePort != "" && config.GlobalConfig.SubStorePort != "" && oldSubStorePort != config.GlobalConfig.SubStorePort {
+							// 重启sub-store服务
+							if app.cancel != nil && !app.checking.Load() {
+								app.cancel()
+								app.ctx, app.cancel = context.WithCancel(context.Background())
+							}
+							assets.RunSubStoreService(app.ctx)
+						} else if oldSubStorePort == "" {
+							assets.RunSubStoreService(app.ctx)
+						} else if config.GlobalConfig.SubStorePort == "" {
+							if app.cancel != nil && !app.checking.Load() {
+								app.cancel()
+								app.ctx, app.cancel = context.WithCancel(context.Background())
 							}
 						}
 

@@ -2074,6 +2074,23 @@ import { initQuickPreview } from './cfg-quickpreview.js';
       return
     }
 
+    const r = await sfetch(API.status)
+    if (!r.ok) {
+      if (els.statusEl) {
+        els.statusEl.textContent = '获取状态失败'
+        els.statusEl.className = 'muted status-label status-error'
+      }
+      return
+    }
+
+    const d = r.payload || {}
+    const isSubStoreRunning = !!d.isSubStoreRunning;
+
+    if (!isSubStoreRunning) {
+      showToast('Sub-Store 服务未运行', 'warn')
+      return
+    }
+
     const newWindow = window.open('', '_blank')
     if (!newWindow) {
       showToast('窗口弹出被拦截', 'warn')

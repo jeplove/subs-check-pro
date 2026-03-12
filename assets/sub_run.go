@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -25,6 +26,7 @@ import (
 )
 
 var InitSubStorePath = ""
+var IsSubStoreRunning atomic.Bool
 
 type subStorePaths struct {
 	substoreDir                   string
@@ -65,24 +67,49 @@ func getSubStorePaths() (*subStorePaths, error) {
 	}, nil
 }
 
+func logStop(port string) {
+	if port != "" {
+		slog.Info("Sub-store 服务已停止", "port", port)
+	} else {
+		slog.Info("Sub-store 服务已禁用", "port", "未设置")
+	}
+}
+
 // RunSubStoreService 运行sub-store服务，支持 ctx，可被外部取消
 func RunSubStoreService(ctx context.Context) {
+	listenPort := strings.TrimPrefix(config.GlobalConfig.ListenPort, ":")
 	subStorePort := strings.TrimPrefix(config.GlobalConfig.SubStorePort, ":")
+
+	if subStorePort == listenPort {
+		slog.Error("SubStore 服务因端口冲突禁用，请修改端口配置")
+		return
+	}
+
+	if subStorePort == "" {
+		IsSubStoreRunning.Store(false)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Sub-store 服务已停止", "port", subStorePort)
+			subStorePort := strings.TrimPrefix(config.GlobalConfig.SubStorePort, ":")
+			logStop(subStorePort)
+			IsSubStoreRunning.Store(false)
 			return
 		default:
 			if err := startSubStore(ctx); err != nil {
 				slog.Error("Sub-store 服务崩溃, 正在重启...", "error", err)
+				IsSubStoreRunning.Store(false)
 			}
 			// 在循环间隙检查 ctx，若被取消则退出
 			select {
 			case <-ctx.Done():
-				slog.Info("Sub-store 服务已停止", "port", subStorePort)
+				subStorePort := strings.TrimPrefix(config.GlobalConfig.SubStorePort, ":")
+				logStop(subStorePort)
+				IsSubStoreRunning.Store(false)
 				return
 			case <-time.After(time.Second * 30):
+				IsSubStoreRunning.Store(true)
 				// 继续重启循环
 			}
 		}
@@ -292,11 +319,13 @@ func startSubStore(ctx context.Context) error {
 	setSysProcAttr(cmd) // 跨平台设置
 
 	if err := cmd.Start(); err != nil {
+		IsSubStoreRunning.Store(false)
 		return fmt.Errorf("启动 sub-store 失败: %w", err)
 	}
 
 	subStorePort := strings.TrimPrefix(config.GlobalConfig.SubStorePort, ":")
 	slog.Info("Sub-Store已启动", "port", subStorePort, "pid", cmd.Process.Pid, "log", paths.logPath)
+	IsSubStoreRunning.Store(true)
 
 	// ctx 取消时尝试杀掉子进程
 	go func() {
@@ -497,6 +526,7 @@ func KillNode() error {
 		slog.Debug("Sub-store service kill failed", "error", err)
 		return err
 	}
+	IsSubStoreRunning.Store(false)
 	slog.Debug("Sub-store service killed", "pid", pid)
 	return nil
 }

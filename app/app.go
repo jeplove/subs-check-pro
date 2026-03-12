@@ -108,6 +108,9 @@ func (app *App) Initialize() error {
 			// 短暂等待，保证 sub-store 启动日志按预期顺序输出
 			time.Sleep(500 * time.Millisecond)
 		}
+	} else {
+		slog.Warn("Sub-store 服务已禁用", "port", "未设置")
+		assets.IsSubStoreRunning.Store(false)
 	}
 
 	// 启动内存监控

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sinspired/subs-check-pro/assets"
 	proxyutils "github.com/sinspired/subs-check-pro/proxy"
 
 	"github.com/goccy/go-yaml"
@@ -176,7 +177,7 @@ func (cs *ConfigSaver) saveCategory(category ProxyCategory) error {
 			return fmt.Errorf("保存 %s 失败: %w", category.Name, err)
 		}
 		// 只在 all.yaml 和 local时，更新substore
-		if config.GlobalConfig.SaveMethod == "local" && config.GlobalConfig.SubStorePort != "" {
+		if config.GlobalConfig.SaveMethod == "local" && config.GlobalConfig.SubStorePort != "" && assets.IsSubStoreRunning.Load(){
 			utils.UpdateSubStore(yamlData)
 		}
 		return nil
@@ -210,7 +211,7 @@ func (cs *ConfigSaver) saveCategory(category ProxyCategory) error {
 		}
 		return nil
 	}
-	if category.Name == "base64.txt" && config.GlobalConfig.SubStorePort != "" {
+	if category.Name == "base64.txt" && config.GlobalConfig.SubStorePort != "" && assets.IsSubStoreRunning.Load(){
 		// http://127.0.0.1:8299/download/sub?target=V2Ray
 		resp, err := http.Get(fmt.Sprintf("%s/download/%s?target=V2Ray", utils.BaseURL, utils.SubName))
 		if err != nil {

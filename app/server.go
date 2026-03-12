@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-yaml"
+	"github.com/sinspired/subs-check-pro/assets"
 	"github.com/sinspired/subs-check-pro/check"
 	"github.com/sinspired/subs-check-pro/config"
 	"github.com/sinspired/subs-check-pro/save/method"
@@ -79,12 +80,26 @@ func (app *App) initHTTPServer() error {
 		slog.Error("注册分享路由失败", "error", err)
 	}
 
+	// 注册WebUI 路由
 	if !config.GlobalConfig.EnableWebUI {
-		slog.Info("Web控制面板已禁用, 仍可通过apiKey访问订阅文件", "api-key", config.GlobalConfig.APIKey)
-		router.GET(AdminPath, func(c *gin.Context) {
-			c.String(http.StatusForbidden, "Web 控制面板已禁用，请在配置中启用 EnableWebUI")
-		})
+		if config.GlobalConfig.APIKey == "" {
+			// WebUI 禁用 + APIKey 未设置
+			slog.Info("Web控制面板已禁用, 且未设置 api-key")
+			router.GET(AdminPath, func(c *gin.Context) {
+				c.String(http.StatusForbidden,
+					"Web 控制面板已禁用，请在配置中启用 EnableWebUI，并设置 api-key")
+			})
+		} else {
+			// WebUI 禁用 + APIKey 已设置
+			slog.Info("Web控制面板已禁用, 仍可通过 api-key 访问订阅文件",
+				"api-key", config.GlobalConfig.APIKey)
+			router.GET(AdminPath, func(c *gin.Context) {
+				c.String(http.StatusForbidden,
+					"Web 控制面板已禁用，请在配置中启用 EnableWebUI")
+			})
+		}
 	} else {
+		// WebUI 启用
 		app.registerWebUIRoutes(router)
 		app.registerAPIRoutes(router)
 	}
@@ -309,14 +324,15 @@ func (app *App) getStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"checking":       app.checking.Load(),
-		"proxyCount":     check.ProxyCount.Load(),
-		"available":      check.Available.Load(),
-		"progress":       check.Progress.Load(),
-		"forceClose":     check.ForceClose.Load(),
-		"successlimited": check.Successlimited.Load(),
-		"processResults": check.ProcessResults.Load(),
-		"lastCheck":      lastCheck,
+		"checking":          app.checking.Load(),
+		"proxyCount":        check.ProxyCount.Load(),
+		"available":         check.Available.Load(),
+		"progress":          check.Progress.Load(),
+		"forceClose":        check.ForceClose.Load(),
+		"successlimited":    check.Successlimited.Load(),
+		"processResults":    check.ProcessResults.Load(),
+		"lastCheck":         lastCheck,
+		"isSubStoreRunning": assets.IsSubStoreRunning.Load(),
 	})
 }
 
@@ -381,7 +397,7 @@ func (app *App) getAnalysisReport(c *gin.Context) {
 // handleAnalysis 渲染检测分析报告页面
 // 数据通过客户端 JS 从 /api/analysis-report 拉取（已有鉴权）
 func (app *App) handleAnalysis(c *gin.Context) {
-    c.HTML(http.StatusOK, "analysis.html", gin.H{})
+	c.HTML(http.StatusOK, "analysis.html", gin.H{})
 }
 
 // getVersion 获取版本
