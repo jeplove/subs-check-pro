@@ -413,11 +413,13 @@ let _lastTab = null;
    宽度计算
 ════════════════════════════════════════════════════════════ */
 const SIDEBAR_W = 160;
-const LAYOUT_GAPS = 16;
-const MIN_PANEL_W = 280;
+const LAYOUT_GAPS = 16;          // ← 补回这行
+const MIN_PANEL_W_SHOW = 280;
+const MIN_PANEL_W_AUTO = 340;
 
 function _editorW() { return (window.innerWidth - SIDEBAR_W - LAYOUT_GAPS) / 2; }
-function _canSplit() { return _editorW() >= MIN_PANEL_W * 2; }
+function _canShowSplitBtn() { return _editorW() >= MIN_PANEL_W_SHOW * 2; }
+function _canSplit() { return _editorW() >= MIN_PANEL_W_AUTO * 2; }
 
 
 /* ═══════════════════════════ DOM 工具 ═══════════════════════════ */
@@ -1186,7 +1188,8 @@ function applyPanels() {
   /* 只有双槽均有内容时才真正进入 split-mode；
      单槽时保持 _splitOn=true 但视觉上铺满单列，
      防止 split-mode 的 flex 布局让空面板撑开空白 */
-  const isSplit = _splitOn && _canSplit() && Boolean(_leftTab) && Boolean(_rightTab);
+  // 用显示阈值，让手动开启的双栏在 280-340 也能生效
+  const isSplit = _splitOn && _canShowSplitBtn() && Boolean(_leftTab) && Boolean(_rightTab);
 
   tabBar.querySelectorAll('.cfg-tab[data-tab]').forEach(t => {
     const id = t.dataset.tab;
@@ -1205,8 +1208,8 @@ function applyPanels() {
 
   /* 双栏按钮状态同步：active 状态 + aria-pressed */
   if (splitBtn) {
-    splitBtn.classList.toggle('split-active', _splitOn && _canSplit());
-    splitBtn.setAttribute('aria-pressed', String(_splitOn && _canSplit()));
+    splitBtn.classList.toggle('split-active', _splitOn && _canShowSplitBtn());
+    splitBtn.setAttribute('aria-pressed', String(_splitOn && _canShowSplitBtn()));
   }
 }
 
@@ -1291,9 +1294,10 @@ export function initConfigForm() {
 
   /* ── 双栏按钮 ─────────────────────────────────────────── */
   function toggleSplit() {
+    if (!_canShowSplitBtn()) return; // 按钮不可见时不响应
     if (!_canSplit()) {
-      window.showToast?.('当前窗口宽度不足以开启双栏', 'info', 2000);
-      return;
+      // 280-340 区间：手动强制开启，但告知可能偏窄
+      // window.showToast?.('窗口略窄，双栏已开启但显示可能偏紧', 'info', 2500);
     }
 
     _splitOn = !_splitOn;
@@ -1323,7 +1327,7 @@ export function initConfigForm() {
   function updateSplitBtnVisibility() {
     if (!splitBtn) return;
     const isYaml = editorContainer?.classList.contains('editor-mode-yaml') ?? false;
-    const show = !isYaml && _canSplit();
+    const show = !isYaml && _canShowSplitBtn();
     splitBtn.style.display = show ? '' : 'none';
     // 分隔线与双栏按钮同步显隐
     const divider = document.getElementById('splitDivider');
@@ -1372,8 +1376,9 @@ export function initConfigForm() {
         }
       } else {
         /* 返回表单：按当前宽度重新决定双栏状态（不依赖历史意图） */
-        const shouldSplit = _canSplit();
-        if (shouldSplit && !_splitOn) {
+        const shouldAutoSplit = _canSplit();
+        const canShow = _canShowSplitBtn();
+        if (shouldAutoSplit && !_splitOn) {
           const ids = allTabIds();
           const cur = _leftTab ?? ids[0];
           const curIdx = ids.indexOf(cur);
@@ -1384,7 +1389,8 @@ export function initConfigForm() {
           _splitOn = true;
           if (!_built.has(_leftTab)) buildPanel(_leftTab);
           if (!_built.has(_rightTab)) buildPanel(_rightTab);
-        } else if (!shouldSplit && _splitOn) {
+        } else if (!canShow && _splitOn) {
+          // 窗口太窄，强制关闭
           _splitOn = false;
           _leftTab = _lastTab ?? _leftTab ?? allTabIds()[0];
           _rightTab = null;
@@ -1430,8 +1436,8 @@ export function initConfigForm() {
     _resizeTimer = setTimeout(() => {
       const isYaml = editorContainer?.classList.contains('editor-mode-yaml') ?? false;
 
-      if (!_canSplit() && _splitOn) {
-        // 宽度不足 → 强制关闭
+      if (!_canShowSplitBtn() && _splitOn) {
+        // 连按钮都不该显示了，强制关闭
         _splitOn = false;
         _leftTab = _lastTab ?? _leftTab ?? allTabIds()[0];
         _rightTab = null;
