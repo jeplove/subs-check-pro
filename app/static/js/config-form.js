@@ -309,8 +309,8 @@ const SCHEMA = [
       {
         title: '其他',
         fields: [
-          { key: 'maxmind-db-path', label: 'MaxMind DB 路径', type: 'text', placeholder: '/data/GeoLite2-City.mmdb', hint: '留空则使用内置数据库' },
-          { key: 'callback-script', label: '回调脚本路径', type: 'text', placeholder: '/data/scripts/notify.sh', hint: '检测完成后执行的回调脚本路径', },
+          { key: 'maxmind-db-path', label: 'MaxMind DB 路径', type: 'text', fullWidth: true, placeholder: '/data/GeoLite2-City.mmdb', hint: '留空则使用内置数据库' },
+          { key: 'callback-script', label: '回调脚本路径', type: 'text', fullWidth: true, placeholder: '/data/scripts/notify.sh', hint: '检测完成后执行的回调脚本路径', },
         ],
       },
     ],
