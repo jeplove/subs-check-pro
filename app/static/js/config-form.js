@@ -978,6 +978,9 @@ function _bindCronInterval(panel) {
     ...intervalRow.querySelectorAll('button.cfg-step-btn'),
   ];
 
+  // intervalInput 从 intervalRow 取，保持与 intervalControls 来源一致
+  const intervalInput = intervalRow.querySelector('input[type="number"]');
+
   function update() {
     const val = cronInput.value.trim();
     const isValid = _isValidCron(val);
@@ -988,7 +991,7 @@ function _bindCronInterval(panel) {
       /* ── 启用态：绿色 ── */
       badge.className = 'cfg-cron-badge cfg-cron-badge--active';
       badge.title = '点击暂停定时计划';
-      badge.innerHTML = `${_SVG_CLOCK}<span>定时计划已启用 · 检测间隔不生效</span>`;
+      badge.innerHTML = `${_SVG_CLOCK}<span>定时计划已启用 · 禁用检测间隔</span>`;
       intervalControls.forEach(c => { c.disabled = true; });
       intervalRow.classList.add('cfg-field--muted');
     } else if (isPaused) {
@@ -999,26 +1002,40 @@ function _bindCronInterval(panel) {
       intervalControls.forEach(c => { c.disabled = false; });
       intervalRow.classList.remove('cfg-field--muted');
     } else {
-      /* ── 隐藏：无合法 Cron ── */
-      badge.className = 'cfg-cron-badge';
-      badge.innerHTML = '';
+      /* ── 未配置 / 输入中：始终显示，文案根据 check-interval 是否有值区分 ── */
+      const ivVal = intervalInput?.value.trim();
+      const hasInterval = ivVal !== '' && !isNaN(Number(ivVal)) && Number(ivVal) > 0;
+      badge.className = 'cfg-cron-badge cfg-cron-badge--active cfg-cron-badge--paused';
+      badge.title = '点击启用定时计划';
+      badge.innerHTML = hasInterval
+        ? `${_SVG_CLOCK}<span>定时计划未配置 · 检测间隔 ${ivVal} 分钟</span>`
+        : `${_SVG_CLOCK}<span>定时计划未配置 · 检测间隔生效</span>`;
+
+      if (cronInput.dataset.pausedValue)
       intervalControls.forEach(c => { c.disabled = false; });
       intervalRow.classList.remove('cfg-field--muted');
     }
   }
 
+  // check-interval 值变化时同步更新 badge 文案
+  intervalInput?.addEventListener('input', update);
+
   function toggleCron() {
     const val = cronInput.value.trim();
     if (_isValidCron(val)) {
-      /* 启用 → 暂停：保存当前值，清空输入框 */
+      /* 启用 → 暂停：存档当前值，清空 */
       cronInput.dataset.pausedValue = val;
       cronInput.value = '';
     } else if (val === '' && cronInput.dataset.pausedValue) {
-      /* 暂停 → 恢复：从 dataset 取回上次合法值 */
+      /* 暂停（存档）→ 恢复 */
       cronInput.value = cronInput.dataset.pausedValue;
       delete cronInput.dataset.pausedValue;
+    } else if (val === '') {
+      /* 未配置 → 启用：用 placeholder 作为默认值填入 */
+      cronInput.value = cronInput.placeholder || '0 4,16 * * *';
+      delete cronInput.dataset.pausedValue;
     } else {
-      return; // 其他状态（非法输入）不响应点击
+      return; // 输入中但非法，不响应
     }
     cronInput.dispatchEvent(new Event('input'));
     cronInput.dispatchEvent(new Event('cfg-cron-refresh'));
