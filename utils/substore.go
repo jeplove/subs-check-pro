@@ -10,58 +10,62 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sinspired/subs-check-pro/config"
 )
 
+// Args 脚本操作参数。
+type Args = map[string]any
+
+// ScriptOperator 脚本操作参数
+type ScriptOperator struct {
+	Type       string `json:"type"`
+	Args       Args   `json:"args"`
+	CustomName string `json:"customName"`
+	ID         string `json:"id,omitempty"`
+	Disabled   bool   `json:"disabled"`
+}
+
+// sub 单条订阅结构体
 type sub struct {
-	Name                   string     `json:"name"`
-	Remark                 string     `json:"remark"`
-	Icon                   string     `json:"icon,omitempty"`
-	IsIconColor            bool       `json:"isIconColor,omitempty"`
-	SubUserInfo            string     `json:"subUserinfo,omitempty"`
-	Source                 string     `json:"source"`
-	IgnoreFailedRemoteFile string     `json:"ignoreFailedRemoteFile,omitempty"`
-	Process                []Operator `json:"process"`
-	Tag                    []string   `json:"tag,omitempty"`
-	Content                string     `json:"content"`
-}
-
-// Arguments 脚本参数
-type Arguments struct {
-	Name string `json:"name"` // 订阅名称：sub
-	Type string `json:"type"` // 订阅类型：0：单条订阅；1：组合订阅
-}
-
-// args 支持可选的 arguments
-type args struct {
-	Content   string    `json:"content"` // 覆写地址，mihomo支持yaml覆写
-	Mode      string    `json:"mode"`
-	Arguments Arguments `json:"arguments,omitempty"`
-}
-
-type Operator struct {
-	Args     args   `json:"args"`
-	Disabled bool   `json:"disabled"`
-	Type     string `json:"type"`
+	Name                  string   `json:"name"`
+	DisplayName           string   `json:"displayName"`
+	DisplayNameAlt        string   `json:"display-name"`
+	Remark                string   `json:"remark"`
+	MergeSources          string   `json:"mergeSources"`
+	IgnoreFailedRemoteSub bool     `json:"ignoreFailedRemoteSub"`
+	PassThroughUA         bool     `json:"passThroughUA"`
+	Icon                  string   `json:"icon,omitempty"`
+	IsIconColor           bool     `json:"isIconColor,omitempty"`
+	Process               []any    `json:"process"`
+	Source                string   `json:"source"`
+	URL                   string   `json:"url"`
+	Content               string   `json:"content"`
+	UA                    string   `json:"ua"`
+	Tag                   []string `json:"tag,omitempty"`
+	SubUserInfo           string   `json:"subUserinfo,omitempty"`
 }
 
 // file 结构体，兼容 mihomo 和 singbox
 type file struct {
-	Name                   string     `json:"name"`
-	Remark                 string     `json:"remark,omitempty"` // 备注信息
-	Icon                   string     `json:"icon,omitempty"`
-	IsIconColor            bool       `json:"isIconColor,omitempty"`
-	SubUserInfo            string     `json:"subUserinfo,omitempty"`
-	Source                 string     `json:"source"`     // "local" or "remote"
-	SourceType             string     `json:"sourceType"` // "subscription" or "collection"
-	SourceName             string     `json:"sourceName"` // 单条订阅 或 组合订阅 的名称
-	Process                []Operator `json:"process"`
-	Type                   string     `json:"type"`          // "mihomoProfile" or "file"
-	URL                    string     `json:"url,omitempty"` // 脚本操作链接
-	IgnoreFailedRemoteFile string     `json:"ignoreFailedRemoteFile,omitempty"`
-	Tag                    []string   `json:"tag,omitempty"`
+	Name                   string   `json:"name"`
+	DisplayName            string   `json:"displayName"`
+	DisplayNameAlt         string   `json:"display-name"`
+	Remark                 string   `json:"remark,omitempty"`
+	Icon                   string   `json:"icon,omitempty"`
+	IsIconColor            bool     `json:"isIconColor,omitempty"`
+	SubInfoURL             string   `json:"subInfoUrl,omitempty"`
+	Source                 string   `json:"source"`
+	SourceType             string   `json:"sourceType"`
+	SourceName             string   `json:"sourceName"`
+	Process                []any    `json:"process"`
+	Type                   string   `json:"type"`
+	URL                    string   `json:"url,omitempty"`
+	Content                string   `json:"content"`
+	IgnoreFailedRemoteFile string   `json:"ignoreFailedRemoteFile,omitempty"`
+	Tag                    []string `json:"tag,omitempty"`
 }
 
 type resourceResult struct {
@@ -69,25 +73,10 @@ type resourceResult struct {
 }
 
 const (
-	SubName     = "sub"
-	MihomoName  = "mihomo"
-	SingboxName = "singbox"
-	SubInfoPath = "/sub-info"
-)
-
-var (
-	LatestSingboxVersion = "1.12"
-	OldSingboxVersion    = "1.11"
-)
-
-var IsGithubProxy bool
-
-// SubUserInfoURL 订阅流量信息 URL，指向本地 {SubInfoPath} 公共接口。
-// mihomo / singbox 系客户端支持通过 URL 实时拉取流量信息，无需嵌入静态字符串。
-// 格式：http://127.0.0.1:{ListenPort}/{SubInfoPath}
-var SubUserInfoURL string
-
-const (
+	SubName           = "sub"
+	MihomoName        = "mihomo"
+	SingboxName       = "singbox"
+	SubInfoPath       = "/sub-info"
 	latestSingboxJSON = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.json"
 	latestSingboxJS   = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.js"
 	// 当前ios支持的最新singbox版本:1.11
@@ -95,30 +84,41 @@ const (
 	OldSingboxJS   = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.js"
 )
 
-// BaseURL 基础URL配置
-var BaseURL string
+var (
+	LatestSingboxVersion = "1.12"
+	OldSingboxVersion    = "1.11"
+	IsGithubProxy        bool
+	BaseURL              string       //基础api地址
+	SubUserInfoURL       string       // SubUserInfoURL 订阅流量信息 URL
+	operatorCounter      atomic.Int64 //脚本操作元素ID计数
+)
+
+// newOperatorID 生成唯一 ID，格式与 sub-store 保持一致。
+// 使用时间戳（秒）+ 原子递增计数器，避免并发/快速调用时重复。
+func newOperatorID() string {
+	sec := time.Now().Unix() % 100_000_000
+	seq := operatorCounter.Add(1) % 100_000_000
+	return fmt.Sprintf("%d.%08d", sec, seq)
+}
 
 // newDefaultSub 返回默认sub
 func newDefaultSub(data []byte) sub {
-	icon := WarpURL("https://gh.39.al/https://raw.githubusercontent.com/sinspired/subs-check-pro/main/app/static/icon/favicon.svg", IsGithubProxy)
+	icon := WarpURL("https://raw.githubusercontent.com/sinspired/subs-check-pro/main/app/static/icon/favicon.svg", IsGithubProxy)
 
 	icon = WarpURL(icon, IsGithubProxy)
 
 	return sub{
-		Content:     string(data),
-		Name:        SubName,
-		Remark:      "默认订阅 (无分流规则)",
-		Tag:         []string{"Subs-Check-Pro", "已检测"},
-		Icon:        icon,
-		IsIconColor: true,
-		SubUserInfo: SubUserInfoURL,
-		Source:      "local",
-		Process: []Operator{
-			{
-				Type:     "Quick Setting Operator",
-				Disabled: false,
-			},
-		},
+		Name:           SubName,
+		DisplayName:    SubName,
+		DisplayNameAlt: SubName,
+		Remark:         "默认订阅 (无分流规则)",
+		Tag:            []string{"Subs-Check-Pro", "已检测"},
+		Icon:           icon,
+		IsIconColor:    true,
+		SubUserInfo:    SubUserInfoURL,
+		Source:         "local",
+		Content:        string(data),
+		Process:        []any{},
 	}
 }
 
@@ -134,32 +134,33 @@ func newMihomoFile() file {
 		Tag:         []string{"Subs-Check-Pro", "已检测"},
 		Icon:        "",
 		IsIconColor: true,
-		SubUserInfo: SubUserInfoURL,
+		SubInfoURL:  SubUserInfoURL,
 		Source:      "local",
 		SourceType:  "subscription",
-		SourceName:  "sub",
-		Process: []Operator{
-			{
-				Type: "Script Operator",
-				Args: args{
-					Content: WarpURL(overwriteURL, IsGithubProxy),
-					Mode:    "link",
+		SourceName:  SubName,
+		Process: []any{
+			ScriptOperator{
+				Type:       "Script Operator",
+				CustomName: "",
+				ID:         newOperatorID(),
+				Args: Args{
+					"content":   WarpURL(overwriteURL, IsGithubProxy),
+					"mode":      "link",
+					"arguments": Args{},
 				},
 				Disabled: false,
 			},
 		},
 		Type:                   "mihomoProfile",
-		URL:                    "",
+		Content:                "",
 		IgnoreFailedRemoteFile: "enabled",
 	}
 }
 
 // newSingboxFile 返回singbox文件
 func newSingboxFile(name, jsURL, jsonURL string) file {
-	jsURL = WarpURL(jsURL, IsGithubProxy)
-	jsURL += "#name=sub&type=0#noCache"
+	jsURL = WarpURL(jsURL, IsGithubProxy) + "#name=sub&type=0"
 	jsonURL = WarpURL(jsonURL, IsGithubProxy)
-	jsonURL += "#noCache"
 
 	version := strings.Split(name, "-")[1]
 	remark := "默认 Sing-Box 订阅 (带分流规则)"
@@ -177,19 +178,21 @@ func newSingboxFile(name, jsURL, jsonURL string) file {
 		Tag:         []string{"Subs-Check-Pro", "已检测"},
 		Icon:        icon,
 		IsIconColor: true,
-		SubUserInfo: SubUserInfoURL,
+		SubInfoURL:  SubUserInfoURL,
 		Source:      "remote",
 		SourceType:  "subscription",
 		SourceName:  "SUB",
-		Process: []Operator{
-			{
-				Type: "Script Operator",
-				Args: args{
-					Content: jsURL,
-					Mode:    "link",
-					Arguments: Arguments{
-						Name: "sub",
-						Type: "0",
+		Process: []any{
+			ScriptOperator{
+				Type:       "Script Operator",
+				CustomName: "",
+				ID:         newOperatorID(),
+				Args: Args{
+					"content": jsURL,
+					"mode":    "link",
+					"arguments": Args{
+						"name": "sub",
+						"type": "0",
 					},
 				},
 				Disabled: false,
@@ -223,11 +226,11 @@ func UpdateSubStore(yamlData []byte) {
 	config.GlobalConfig.SubStorePort = formatPort(config.GlobalConfig.SubStorePort)
 	// 设置基础URL
 	BaseURL = fmt.Sprintf("http://127.0.0.1%s", config.GlobalConfig.SubStorePort)
-	if config.GlobalConfig.SubStorePath != "" {
-		if !strings.HasPrefix(config.GlobalConfig.SubStorePath, "/") {
-			config.GlobalConfig.SubStorePath = "/" + config.GlobalConfig.SubStorePath
+	if p := config.GlobalConfig.SubStorePath; p != "" {
+		if !strings.HasPrefix(p, "/") {
+			config.GlobalConfig.SubStorePath = "/" + p
 		}
-		BaseURL = fmt.Sprintf("%s%s", BaseURL, config.GlobalConfig.SubStorePath)
+		BaseURL += config.GlobalConfig.SubStorePath
 	}
 
 	// 创建默认订阅实例
@@ -268,29 +271,23 @@ func UpdateSubStore(yamlData []byte) {
 
 // processSingboxFile 处理 singbox 订阅
 func processSingboxFile(sbc *config.SingBoxConfig, defaultJS, defaultJSON, singboxVersion string) {
-	var js, jsonStr string
+	js, jsonStr := defaultJS, defaultJSON
 	if len(sbc.JS) > 0 && len(sbc.JSON) > 0 {
 		js = sbc.JS[0]
 		jsonStr = sbc.JSON[0]
-	} else {
-		js = defaultJS
-		jsonStr = defaultJSON
 	}
+
 	name := SingboxName + "-" + singboxVersion
 
-	file := newSingboxFile(name, js, jsonStr)
-	if err := file.updateSubStoreFile(); err != nil {
-		slog.Info(fmt.Sprintf("%s 订阅更新失败", file.Name))
+	f := newSingboxFile(name, js, jsonStr)
+	if err := f.updateSubStoreFile(); err != nil {
+		slog.Info(fmt.Sprintf("%s 订阅更新失败", f.Name))
 	}
 }
 
 // checkResource 检查资源是否存在
 func checkResource(endpoint, name string) error {
-	url := fmt.Sprintf("%s/api/%s/%s", BaseURL, endpoint, name)
-	if endpoint == "wholeFile" {
-		url = fmt.Sprintf("%s/api/%s/%s", BaseURL, endpoint, name)
-	}
-	resp, err := http.Get(url)
+	resp, err := http.Get(fmt.Sprintf("%s/api/%s/%s", BaseURL, endpoint, name))
 	if err != nil {
 		return err
 	}
@@ -315,8 +312,11 @@ func createResource(endpoint string, data any, name string) error {
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/api/%ss", BaseURL, endpoint)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/%ss", BaseURL, endpoint),
+		"application/json",
+		bytes.NewBuffer(jsonData),
+	)
 	if err != nil {
 		return err
 	}
@@ -333,8 +333,11 @@ func updateResource(endpoint string, data any, name string) error {
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/api/%s/%s", BaseURL, endpoint, name)
-	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest(
+		http.MethodPatch,
+		fmt.Sprintf("%s/api/%s/%s", BaseURL, endpoint, name),
+		bytes.NewBuffer(jsonData),
+	)
 	if err != nil {
 		return err
 	}
@@ -352,11 +355,19 @@ func updateResource(endpoint string, data any, name string) error {
 
 // updateSubStoreFile 检查资源,创建,更新sub-store
 func (f file) updateSubStoreFile() error {
+	content := ""
+	for _, item := range f.Process {
+		if op, ok := item.(ScriptOperator); ok && !op.Disabled {
+			content, _ = op.Args["content"].(string)
+			break
+		}
+	}
+
 	if f.Name == MihomoName {
-		if f.Process[0].Args.Content == "" {
+		if content == "" {
 			return fmt.Errorf("未设置覆写文件")
 		}
-	} else if f.Process[0].Args.Content == "" || f.URL == "" {
+	} else if content == "" || f.URL == "" {
 		return fmt.Errorf("未设置覆写文件或规则文件")
 	}
 
