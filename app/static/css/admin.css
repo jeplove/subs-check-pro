@@ -1204,33 +1204,38 @@ main {
 
 /* 内容包装器：负责高度动画 */
 .summary-content-wrapper {
-  max-height: 400px;
-  /* 足够容纳段落的高度 */
+  max-height: 700px;
   overflow: hidden;
-  transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
   opacity: 1;
 }
 
-/* 内容布局 */
+/* 折叠态 */
+.analysis-feather-tip.collapsed .summary-content-wrapper {
+  max-height: 0;
+  opacity: 0;
+}
+
+.analysis-feather-tip.collapsed .icon-chevron {
+  transform: rotate(-90deg);
+}
+
+/* ── 文字摘要区 ── */
 .tip-content {
   border-top: 1px solid var(--border);
-  padding: 10px 18px 6px 18px;
+  padding: 10px 16px 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  /* 增加行距，更显整齐 */
+  gap: 3px;
 }
 
 .summary-line {
-  display: flex;
+  display: inline-block;
   align-items: left;
   flex-wrap: wrap;
   color: var(--fg);
-  /* white-space: nowrap; */
-  display: inline-block;
 }
 
-/* 分隔符：| 样式 */
 .sep-pipe {
   color: var(--calculating);
   padding: 0 6px;
@@ -1238,7 +1243,6 @@ main {
   font-size: 10px;
 }
 
-/* 维度标签 */
 .sub-label {
   color: var(--muted);
   font-weight: 500;
@@ -1247,18 +1251,15 @@ main {
 .kv {
   color: var(--muted);
 }
-
 .kv b {
   color: var(--accent);
   font-weight: 500;
 }
-
 .b-data {
   color: var(--accent);
   padding: 0 6px;
 }
 
-/* 列表详情：弱化 */
 .muted-list {
   display: inline;
   color: var(--muted);
@@ -1271,25 +1272,271 @@ main {
   white-space: nowrap;
   padding: 0 4px;
 }
-
-/* 地区：蓝紫色 (冷色调) */
 .tag-location {
   color: rgb(238, 44, 0);
 }
-
-/* 协议：番茄红 (亮色调) */
 .tag-type {
   color: rgb(232, 106, 2);
 }
-
-/* 媒体：紫色 (深色调) */
 .tag-media {
   color: rgb(2, 118, 233);
 }
-
-/* AI：橙色 (暖色调) */
 .tag-ai {
   color: rgb(0, 233, 113);
+}
+
+/* ── 地图 + 协议双列网格 ── */
+.smr-grid {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+
+/* section 之间统一加分隔线 */
+.smr-section + .smr-section {
+  border-top: 1px solid var(--border);
+}
+
+/* ── 各 section 统一内边距 ── */
+.smr-section {
+  padding: 10px 16px;
+  min-width: 0;
+}
+
+.smr-section-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
+
+/* ── 迷你地图 ── */
+.smr-map-slot {
+  width: 100%;
+  aspect-ratio: 16 / 5;
+  max-height: 180px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #060d1a;
+  position: relative;
+}
+
+/* 小屏：稍高 */
+@media (max-width: 559px) {
+  .smr-map-slot {
+    aspect-ratio: 16 / 7;
+    max-height: 200px;
+  }
+}
+
+/* 小屏单列：更高，沉浸感更强 */
+@media (max-width: 559px) {
+  .smr-map-slot {
+    aspect-ratio: 16 / 8;
+    max-height: 220px;
+  }
+}
+
+/* ── 大区色条 & 标签（地图下方）── */
+.smr-region-bar {
+  display: flex;
+  height: 3px;
+  border-radius: 99px;
+  overflow: hidden;
+  gap: 1px;
+  margin-top: 8px;
+}
+
+.smr-region-seg {
+  height: 100%;
+  border-radius: 1px;
+  transition: flex 0.4s ease;
+}
+
+.smr-region-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  margin-top: 6px;
+}
+
+.smr-region-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.smr-region-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.smr-region-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+.smr-region-val {
+  font-weight: 700;
+  color: var(--fg);
+}
+.smr-region-pct {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+/* ── 协议统计行 ── */
+.smr-proto-stat-row {
+  display: flex;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border) 30%, transparent);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.smr-proto-stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+
+.smr-proto-stat-item:last-child {
+  border-right: none;
+}
+
+.smr-proto-stat-val {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.smr-proto-stat-label {
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ── 协议 donut + 列表 ── */
+.smr-proto-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.smr-proto-wrap > svg {
+  flex-shrink: 0;
+  width: 64px !important;
+  height: 64px !important;
+}
+
+.smr-proto-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  max-height: 96px;
+  overflow: hidden;
+}
+
+.smr-proto-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.smr-proto-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.smr-proto-name {
+  font-size: 9px;
+  font-weight: 700;
+  width: 46px;
+  flex-shrink: 0;
+}
+
+.smr-proto-bar-wrap {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.smr-proto-bar {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.5s ease;
+}
+
+.smr-proto-pct {
+  font-size: 9px;
+  color: var(--muted);
+  width: 24px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* 堆叠色条 */
+.smr-stack-bar {
+  display: flex;
+  height: 4px;
+  border-radius: 99px;
+  overflow: hidden;
+  gap: 1px;
+  margin-top: 8px;
+}
+
+/* 完整报告按钮 */
+.summary-analysis-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s, background 0.15s;
+}
+
+.summary-analysis-btn svg {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.summary-analysis-btn:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.summary-analysis-btn:hover svg {
+  opacity: 1;
 }
 
 /* ==================== 折叠状态 (Collapsed) ==================== */

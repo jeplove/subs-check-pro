@@ -1414,117 +1414,228 @@ import { initQuickPreview } from './cfg-quickpreview.js';
     }
   }
 
+  let _summaryMapInstance = null;
+
   /**
-     * 结构化渲染分析摘要 - 层次化精炼版
-     */
+   * 结构化渲染分析摘要 - 含迷你地图 & 协议总览
+   */
   function renderAnalysisSummary(data) {
     const summaryCard = $('#analysisSummaryCard');
     if (!summaryCard || !data) return;
+
+    if (_summaryMapInstance) { _summaryMapInstance.destroy(); _summaryMapInstance = null; }
 
     const info = data.check_info || {};
     const global = data.global_analysis || {};
     const rawSummary = data.summary || "";
 
-    // 严格的显示判断：如果没有核心数据，直接销毁内容并隐藏
     if (!global.alive_count && !rawSummary) {
       summaryCard.style.display = 'none';
       summaryCard.innerHTML = "";
       return;
     }
 
-    // 1. 数据预处理
+    // ── 基础数据 ─────────────────────────────────────────────────
     const geoKeys = Object.keys(global.geography_distribution || {});
     const protoKeys = Object.keys(global.protocol_distribution || {});
     const cfVal = parseFloat(global.quality_metrics?.cf_consistent_ratio || 0);
-    const vpsVal = (100 - cfVal);
+    const vpsVal = 100 - cfVal;
+    const lineFeature = cfVal > 70 ? "以 Cloudflare 中转为主"
+      : vpsVal > 50 ? "以 VPS 直连为主"
+        : "线路分布多样";
 
-    let lineFeature = cfVal > 70 ? "以 Cloudflare 中转为主" : (vpsVal > 50 ? "以 VPS 直连为主" : "线路分布多样");
-
-    // 2. 解锁信息格式化
     const mediaRaw = rawSummary.match(/流媒体解锁: \[(.*?)\]/)?.[1] || "";
     const aiRaw = rawSummary.match(/AI 解锁\[(.*?)\]/)?.[1] || "";
 
-    // --- 样式辅助函数 ---
+    // ── 样式辅助 ─────────────────────────────────────────────────
+    const tagWrap = (cls, text) =>
+      `<span style="white-space:nowrap;display:inline-block;">[ <span class="${cls} tag-list">${text}</span> ]</span>`;
+    const labelTagBond = (label, tagHtml) =>
+      `<span style="white-space:nowrap;display:inline-block;vertical-align:baseline;">
+       <span class="sub-label">${label}</span>${tagHtml}
+     </span>`;
+    const listSpan = text =>
+      `<span class="muted-list" style="display:inline !important;white-space:normal;margin-left:4px;">${text}</span>`;
 
-    // 生成不换行的标签 [ 地区 ]
-    const tagWrap = (cls, text) => `<span style="white-space: nowrap; display: inline-block;">[ <span class="${cls} tag-list">${text}</span> ]</span>`;
-
-    // 核心改进：锁定“标题”与“标签”作为一个不换行的整体，确保“覆盖：[ 地区 ]”永远在同一行
-    const labelTagBond = (label, tagHtml) => `
-      <span style="white-space: nowrap; display: inline-block; vertical-align: baseline;">
-        <span class="sub-label">${label}</span>${tagHtml}
-      </span>`;
-
-    // 列表内容处理：强制使用 display: inline 覆盖原有的 inline-flex，允许文字紧随标签并逐个单词换行
-    const listSpan = (text) => `<span class="muted-list" style="display: inline !important; white-space: normal; margin-left: 4px;">${text}</span>`;
-
-    // --- 覆盖行处理 (地区 & 协议) ---
+    // ── 覆盖行 ───────────────────────────────────────────────────
     let coverageRow = "";
-    const hasGeo = geoKeys.length > 0;
-    const hasProto = protoKeys.length > 0;
-
+    const hasGeo = geoKeys.length > 0, hasProto = protoKeys.length > 0;
     if (hasGeo || hasProto) {
       let content = "";
-
       if (hasGeo) {
         content += labelTagBond('覆盖：', tagWrap('tag-location', '地区'));
         content += listSpan(geoKeys.join(', '));
       }
-
       if (hasGeo && hasProto) {
-        // 分隔符与下一个标签锁定，防止竖线孤零零留在行尾
-        content += ` <span style="white-space: nowrap;"><span class="sep-pipe">|</span> ${tagWrap('tag-type', '协议')}</span>`;
+        content += ` <span style="white-space:nowrap;"><span class="sep-pipe">|</span> ${tagWrap('tag-type', '协议')}</span>`;
         content += listSpan(protoKeys.join(', '));
       } else if (hasProto) {
         content += labelTagBond('覆盖：', tagWrap('tag-type', '协议'));
         content += listSpan(protoKeys.join(', '));
       }
-
-      coverageRow = `<div class="summary-line" style="display: block;">${content}</div>`;
+      coverageRow = `<div class="summary-line" style="display:block;">${content}</div>`;
     }
 
-    // --- 解锁行处理 (媒体 & AI) ---
+    // ── 解锁行 ───────────────────────────────────────────────────
     let unlockDetailsRow = "";
-    const hasMedia = !!mediaRaw;
-    const hasAI = !!aiRaw;
-
+    const hasMedia = !!mediaRaw, hasAI = !!aiRaw;
     if (hasMedia || hasAI) {
       let content = "";
-
       if (hasMedia) {
         content += labelTagBond('解锁：', tagWrap('tag-media', '媒体'));
         content += listSpan(mediaRaw);
       }
-
       if (hasMedia && hasAI) {
-        content += ` <span style="white-space: nowrap;"><span class="sep-pipe">|</span> ${tagWrap('tag-ai', 'AI')}</span>`;
+        content += ` <span style="white-space:nowrap;"><span class="sep-pipe">|</span> ${tagWrap('tag-ai', 'AI')}</span>`;
         content += listSpan(aiRaw);
       } else if (hasAI) {
         content += labelTagBond('解锁：', tagWrap('tag-ai', 'AI'));
         content += listSpan(aiRaw);
       }
-
-      unlockDetailsRow = `<div class="summary-features"><div class="summary-line" style="display: block; margin-top: 4px;">${content}</div></div>`;
+      unlockDetailsRow = `<div class="summary-features">
+      <div class="summary-line" style="display:block;margin-top:4px;">${content}</div>
+    </div>`;
     }
 
-    let speedtestConfigRow = info.check_min_speed > 0
+    const speedtestConfigRow = info.check_min_speed > 0
       ? `<span class="kv">测速下限 <b>${info.check_min_speed}</b> KB/s</span>`
       : `<span class="sub-label">仅测活</span>`;
 
+    // ── 迷你协议总览 ─────────────────────────────────────────────
+    const protoData = global.protocol_distribution || {};
+    const aliveCount = global.alive_count || 0;
+    const protoEntries = Object.entries(protoData).sort((a, b) => b[1] - a[1]);
+
+    let miniProtoHTML = '';
+    if (protoEntries.length && typeof buildDonutSVG === 'function') {
+      // 统计行（对应 protoStatRow）
+      const top1 = protoEntries[0], top2 = protoEntries[1];
+      const statItems = [
+        { val: aliveCount, label: '节点总量' },
+        { val: protoEntries.length, label: '协议种类' },
+        top1 ? {
+          val: top1[0].toUpperCase(),
+          label: `主力 ${Math.round(top1[1] / Math.max(1, aliveCount) * 100)}%`,
+          color: getProtoColor(top1[0])
+        } : null,
+        top2 ? {
+          val: top2[0].toUpperCase(),
+          label: `次要 ${Math.round(top2[1] / Math.max(1, aliveCount) * 100)}%`,
+          color: getProtoColor(top2[0])
+        } : null,
+      ].filter(Boolean);
+
+      const miniProtoStatRow = `
+      <div class="smr-proto-stat-row">
+        ${statItems.map(s => `
+          <div class="smr-proto-stat-item">
+            <div class="smr-proto-stat-val"${s.color ? ` style="color:${s.color}"` : ''}>${s.val}</div>
+            <div class="smr-proto-stat-label">${s.label}</div>
+          </div>`).join('')}
+      </div>`;
+
+      // Donut + 列表
+      const donutSVG = buildDonutSVG(protoEntries, aliveCount, 72);
+      const donutList = protoEntries.map(([k, v]) => {
+        const pct = Math.round(v / Math.max(1, aliveCount) * 100);
+        const color = getProtoColor(k);
+        return `<div class="smr-proto-row">
+        <span class="smr-proto-dot"  style="background:${color}"></span>
+        <span class="smr-proto-name" style="color:${color}">${k.toUpperCase()}</span>
+        <div class="smr-proto-bar-wrap">
+          <div class="smr-proto-bar" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <span class="smr-proto-pct">${pct}%</span>
+      </div>`;
+      }).join('');
+
+      const stackBar = protoEntries.map(([k, v]) =>
+        `<div style="flex:${Math.max(2, Math.round(v / Math.max(1, aliveCount) * 100))};
+        background:${getProtoColor(k)};height:100%;border-radius:1px;"
+        title="${k}: ${v}"></div>`
+      ).join('');
+
+      miniProtoHTML = `
+      <div class="smr-section">
+        <div class="smr-section-title">协议总览</div>
+        ${miniProtoStatRow}
+        <div class="smr-proto-wrap">
+          ${donutSVG}
+          <div class="smr-proto-list">${donutList}</div>
+        </div>
+        <div class="smr-stack-bar">${stackBar}</div>
+      </div>`;
+    }
+
+    // ── 迷你地图 + 大区分布 ──────────────────────────────────────
+    const geoEntries = Object.entries(global.geography_distribution || {})
+      .sort((a, b) => b[1] - a[1]);
+
+    let miniMapHTML = '';
+    if (geoEntries.length && typeof GeoFlightMap !== 'undefined') {
+
+      // 大区汇总
+      const geoTotal = geoEntries.reduce((s, [, v]) => s + v, 0) || 1;
+      const regionMap = {};
+      for (const [code, count] of geoEntries) {
+        const r = (typeof GEO_REGIONS !== 'undefined' && GEO_REGIONS[code]) || '其他';
+        regionMap[r] = (regionMap[r] || 0) + count;
+      }
+      const regionEntries = Object.entries(regionMap).sort((a, b) => b[1] - a[1]);
+
+      // 色条
+      const regionBar = regionEntries.map(([r, v]) =>
+        `<div class="smr-region-seg"
+            style="flex:${Math.max(1, v)};background:${(typeof REGION_COLORS !== 'undefined' && REGION_COLORS[r]) || '#64748b'}"
+            title="${r}: ${v}"></div>`
+      ).join('');
+
+      // 文字标签
+      const regionLabels = regionEntries.map(([r, v]) => {
+        const color = (typeof REGION_COLORS !== 'undefined' && REGION_COLORS[r]) || '#64748b';
+        const pct = Math.round(v / geoTotal * 100);
+        return `<span class="smr-region-item">
+        <span class="smr-region-dot" style="background:${color}"></span>
+        <span class="smr-region-name">${r}</span>
+        <span class="smr-region-val">${v}</span>
+        <span class="smr-region-pct">${pct}%</span>
+      </span>`;
+      }).join('');
+
+      miniMapHTML = `
+      <div class="smr-section">
+        <div class="smr-section-title">地理分布</div>
+        <div class="smr-map-slot" id="summaryMiniMapSlot"></div>
+        <div class="smr-region-bar">${regionBar}</div>
+        <div class="smr-region-labels">${regionLabels}</div>
+      </div>`;
+    }
+
+    const miniGridHTML = (miniMapHTML || miniProtoHTML) ? `
+      <div class="smr-grid">
+        ${miniMapHTML}
+        ${miniProtoHTML}
+      </div>` : '';
+
+    // ── 注入 HTML ────────────────────────────────────────────────
     summaryCard.innerHTML = `
     <div class="summary-toggle-header" id="summaryToggleBtn">
       <div class="summary-title">
-        <svg class="icon-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
-          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+        <svg class="icon-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" width="12" height="12">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77
+                   l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
         </svg>
         <span>检测结果摘要</span>
       </div>
       <div class="summary-header-actions">
-        <svg class="icon-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+        <svg class="icon-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" width="14" height="14">
           <polyline points="6 9 12 15 18 9"></polyline>
         </svg>
       </div>
     </div>
+
     <div class="summary-content-wrapper">
       <div class="tip-content">
         <div class="summary-line">
@@ -1534,22 +1645,22 @@ import { initQuickPreview } from './cfg-quickpreview.js';
           <span class="sep-pipe">|</span>
           <span class="kv">消耗流量 <b>${info.check_traffic || '-'}</b></span>
         </div>
-
         <div class="summary-line">
           <span class="sub-label">${lineFeature}：</span>
           <span class="kv">CF <b>${cfVal.toFixed(1)}%</b></span>
           <span class="sep-pipe">|</span>
           <span class="kv">VPS <b>${vpsVal.toFixed(1)}%</b></span>
         </div>
-
-        <!-- 覆盖行 -->
         ${coverageRow}
-
-        <!-- 功能行：解锁状态 -->
         ${unlockDetailsRow}
       </div>
-      <a href="/analysis"  class="summary-analysis-btn" target="_blank" rel="noopener noreferrer" title="查看完整分析报告">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="11" height="11">
+
+      ${miniGridHTML}
+
+      <a href="/analysis" class="summary-analysis-btn"
+         target="_blank" rel="noopener noreferrer" title="查看完整分析报告">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" width="11" height="11">
           <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
           <polyline points="15 3 21 3 21 9"/>
           <line x1="10" y1="14" x2="21" y2="3"/>
@@ -1559,17 +1670,36 @@ import { initQuickPreview } from './cfg-quickpreview.js';
     </div>
   `;
 
-    // 绑定交互
-    const btn = summaryCard.querySelector('#summaryToggleBtn');
-    if (btn) {
-      btn.onclick = (e) => {
+    // ── 折叠交互 ─────────────────────────────────────────────────
+    const toggleBtn = summaryCard.querySelector('#summaryToggleBtn');
+    if (toggleBtn) {
+      toggleBtn.onclick = e => {
         e.stopPropagation();
+        const wasCollapsed = summaryCard.classList.contains('collapsed');
         summaryCard.classList.toggle('collapsed');
+        // 展开时重置地图动画起点
+        if (wasCollapsed && _summaryMapInstance) _summaryMapInstance.t0 = null;
       };
     }
-
     if (!summaryCard.classList.contains('collapsed')) {
       summaryCard.classList.add('collapsed');
+    }
+
+    // ── 初始化迷你地图（传入可见性函数，绕过 tab-geo 检查）────────
+    if (typeof GeoFlightMap !== 'undefined' && geoEntries.length) {
+      const mapSlot = summaryCard.querySelector('#summaryMiniMapSlot');
+      if (mapSlot) {
+        const origin = typeof guessOrigin === 'function'
+          ? guessOrigin() : { lon: 116.4, lat: 39.9 };
+
+        // 可见性：摘要卡片存在且处于展开状态
+        const visibilityFn = () =>
+          !!summaryCard.isConnected && !summaryCard.classList.contains('collapsed');
+
+        requestAnimationFrame(() => {
+          _summaryMapInstance = new GeoFlightMap(mapSlot, geoEntries, origin, visibilityFn);
+        });
+      }
     }
 
     summaryCard.style.display = (actionState === 'idle') ? 'flex' : 'none';

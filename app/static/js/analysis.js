@@ -110,7 +110,8 @@ function loadScript(src) {
 }
 
 class GeoFlightMap {
-    constructor(container, entries, origin) {
+    constructor(container, entries, origin, visibilityFn = null) {
+        this._visibilityFn = visibilityFn;   // ← 新增
         this.container = container;
         this.origin = origin;
         this.entries = entries.filter(([c]) => GEO_COUNTRY_COORDS[c]);
@@ -549,11 +550,16 @@ class GeoFlightMap {
 
     // 主渲染循环
     draw(now) {
-        // tab 不可见时跳过渲染节省性能
-        if (!document.getElementById('tab-geo')?.classList.contains('active')) {
+        // 可见性检查：优先用外部传入函数，否则回退到 tab-geo 判断，tab 不可见时跳过渲染节省性能
+        const isVisible = this._visibilityFn
+            ? this._visibilityFn()
+            : document.getElementById('tab-geo')?.classList.contains('active');
+
+        if (!isVisible) {
             this.raf = requestAnimationFrame(t => this.draw(t));
             return;
         }
+
         if (!this.t0) this.t0 = now;
         const elapsed = now - this.t0;
         const { ctx, W, H } = this;
@@ -1429,4 +1435,4 @@ async function writeClipboard(text) {
     document.body.removeChild(ta); return ok;
 }
 
-initPage();
+if (document.getElementById('loginScene')) initPage();
