@@ -550,14 +550,20 @@ class GeoFlightMap {
 
     // 主渲染循环
     draw(now) {
-        // 不可见时直接停止循环，由 resume() 重启
         const isVisible = this._visibilityFn
             ? this._visibilityFn()
             : document.getElementById('tab-geo')?.classList.contains('active');
 
         if (!isVisible) {
-            this.raf = null;   // 标记已停止
-            return;            // 不再调度下一帧
+            if (this._visibilityFn) {
+                // admin 摘要卡片模式：真正停止循环，由 resume() 重启
+                this.raf = null;
+                return;
+            } else {
+                // 完整报告页模式：保持原有行为，跳帧但继续调度
+                this.raf = requestAnimationFrame(t => this.draw(t));
+                return;
+            }
         }
 
         if (!this.t0) this.t0 = now;
@@ -585,7 +591,7 @@ class GeoFlightMap {
     resume() {
         if (!this.raf) { this.t0 = null; this._startAnim(); }
     }
-    
+
     destroy() {
         if (this.raf) cancelAnimationFrame(this.raf);
         if (this._ro) this._ro.disconnect();
