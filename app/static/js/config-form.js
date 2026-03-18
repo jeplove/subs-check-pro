@@ -761,15 +761,67 @@ function mkPassword(field, value) {
  */
 function mkInput(field, value) {
   if (field.type === 'password') return mkPassword(field, value);
-  const inp = el('input', { class: 'cfg-input', type: 'text', 'data-key': field.key, placeholder: field.placeholder ?? '' });
+
+  // 如果是全宽的文本输入框，将其转换为可自动折行展开的 textarea
+  const isExpandable = field.type === 'text' && field.fullWidth;
+  const tag = isExpandable ? 'textarea' : 'input';
+
+  const attrs = { class: 'cfg-input', 'data-key': field.key, placeholder: field.placeholder ?? '' };
+
+  if (isExpandable) {
+    attrs.rows = '1';
+    attrs.spellcheck = 'false';
+    attrs.autocomplete = 'off';
+    attrs.autocorrect = 'off';
+    attrs.autocapitalize = 'none';
+    attrs.class += ' cfg-expandable-input';
+  } else {
+    attrs.type = 'text';
+  }
+
+  const inp = el(tag, attrs);
   inp.value = value ?? '';
+
+  // 为全宽输入框绑定自动拉伸折行逻辑
+  if (isExpandable) {
+    let _singleLineH = 0;
+
+    const autoResize = () => {
+      if (!inp.matches(':focus')) return;
+
+      inp.style.height = '1px';
+      let sh = inp.scrollHeight;
+
+      if (!_singleLineH) {
+        const pv = inp.value;
+        inp.value = 'x';
+        _singleLineH = inp.scrollHeight;
+        inp.value = pv;
+        sh = inp.scrollHeight;
+      }
+
+      if (sh > _singleLineH) {
+        inp.style.height = Math.min(sh, 300) + 'px';
+      } else {
+        inp.style.height = '';
+      }
+    };
+
+    inp.addEventListener('input', autoResize);
+    inp.addEventListener('focus', autoResize);
+    inp.addEventListener('blur', () => { inp.style.height = ''; });
+
+    // 屏蔽回车键：这类字段在逻辑上仍是单行字符串，禁止插入实际换行符
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') e.preventDefault();
+    });
+  }
 
   const specialDefs = SPECIAL_INPUT_VALUES[field.key];
   if (!specialDefs) return inp;
 
-  const originalPlaceholder = field.placeholder ?? '';
-
   /* ── 含特殊值定义：包裹一层 flex 容器，右侧插入徽章 ── */
+  const originalPlaceholder = field.placeholder ?? '';
   const wrap = el('div', { class: 'cfg-special-wrap' });
   const badge = el('span', { class: 'cfg-special-badge' });
   badge.style.display = 'none';
@@ -1802,8 +1854,8 @@ function collectPanel(tabId) {
           break
         }
         default: {
-          /* text / password：input[data-key] 在 cfg-special-wrap 内也能查到 */
-          const inp = panel.querySelector(`input[data-key="${key}"]`);
+          /* text / password：适配 input 和 textarea */
+          const inp = panel.querySelector(`input[data-key="${key}"], textarea[data-key="${key}"]`);
           if (inp) out[key] = inp.value;
           break;
         }

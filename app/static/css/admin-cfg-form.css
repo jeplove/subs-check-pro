@@ -1185,6 +1185,38 @@
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
+textarea.cfg-expandable-input {
+  resize: none;
+  height: 32px;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  white-space: nowrap; /* 默认保持单行不换行 */
+  word-break: break-all;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 80%, transparent)
+    transparent;
+  display: block;
+  font-family: var(--font-mono, monospace);
+  line-height: 1.5;
+}
+
+textarea.cfg-expandable-input::-webkit-scrollbar {
+  height: 2px;
+}
+textarea.cfg-expandable-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+textarea.cfg-expandable-input::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border) 120%, transparent);
+  border-radius: 99px;
+}
+
+textarea.cfg-expandable-input:focus {
+  white-space: pre-wrap; /* focus 时允许换行并自动撑高 */
+  min-height: 32px;
+  max-height: 300px;
+}
+
 /* ════════════════════════════════════════════════════════════
    帮助链接徽章
 ════════════════════════════════════════════════════════════ */
@@ -1597,9 +1629,19 @@
     font-size: 18px;
   }
 
+  textarea.cfg-expandable-input {
+    height: 36px;
+    line-height: 1.2;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  textarea.cfg-expandable-input:focus {
+    min-height: 36px;
+  }
+
   .cfg-url-item .cfg-url-input {
-    height: 38px; /* 增加移动端输入框基础高度 */
-    line-height: 1.4; /* 恢复正常行高，防止字体基线下沉 */
+    height: 36px; /* 增加移动端输入框基础高度 */
+    line-height: 1.2; /* 恢复正常行高，防止字体基线下沉 */
     padding-top: 7px; /* 重新分配内边距实现几何居中 (38-2-22.4)/2 ≈ 7 */
     padding-bottom: 7px;
   }
@@ -1607,7 +1649,7 @@
   /* 同步增加 focus 和 折行模式下的最小高度限制 */
   .cfg-url-item .cfg-url-input:focus,
   .cfg-url-list.wrap-mode .cfg-url-input {
-    min-height: 38px;
+    min-height: 36px;
   }
 
   /* 预览面板铺满全屏 */
