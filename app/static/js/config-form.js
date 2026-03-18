@@ -173,7 +173,7 @@ const SCHEMA = [
           {
             key: 'node-type', label: '协议筛选', type: 'chips',
             hint: '留空 = 检测全部协议',
-            options: ['ss', 'vmess', 'vless', 'trojan', 'hysteria', 'hy2', 'tuic'],
+            options: ['ss', 'ssr', 'vmess', 'vless', 'snell', 'trojan', 'hysteria', 'hysteria2', 'tuic', 'wireguard', 'ssh', 'mieru', 'anytls', 'sudoku', 'masque', 'trusttunnel', 'socks5', 'http'],
           },
         ],
       },
@@ -194,7 +194,7 @@ const SCHEMA = [
               { value: 'local', label: '本地 (local)' },
               { value: 'webdav', label: 'WebDAV' },
               { value: 'gist', label: 'GitHub Gist' },
-              { value: 'r2', label: 'R2存储' },
+              { value: 'r2', label: 'R2 存储' },
               { value: 's3', label: 'S3 / MinIO' },
             ],
           },
@@ -222,14 +222,14 @@ const SCHEMA = [
         ],
       },
       {
-        title: 'R2', conditional: 'r2',
+        title: 'CF R2 存储', conditional: 'r2',
         fields: [
           { key: 'worker-url', label: 'Woker 地址', type: 'text', placeholder: 'https://example.worker.dev', hint: "将测速结果推送到 Cloudflare Worker的地址" },
           { key: 'worker-token', label: 'Worker令牌', type: 'password', placeholder: '1234567890' },
         ],
       },
       {
-        title: 'S3 / MinIO / R2', conditional: 's3',
+        title: 'S3 / MinIO', conditional: 's3',
         fields: [
           { key: 's3-endpoint', label: 'Endpoint', type: 'text', placeholder: '127.0.0.1:9000' },
           { key: 's3-access-id', label: 'Access Key ID', type: 'text', placeholder: 'minioadmin' },
@@ -463,7 +463,7 @@ const FIELD_VALIDATORS = {
     const n = Number(v);
     if (n === 0 || _anyAutoMode()) {
       const { alive, speed, media, base } = _estimateAuto();
-      return { level: 'ok', msg: `自适应模式（基准 =${base}）· 测活 ≈ ${alive} · 测速 ≈ ${speed} · 媒体 ≈ ${media}` };
+      return { level: 'ok', msg: `自适应模式（基准 =${base}）· 测活 ≈ ${alive}` };
     }
     if (n > 1000) return { level: 'warn', msg: `并发 ${n} 过高，超出多数路由器处理能力，可能影响正常上网，建议 100–300` };
     if (n > 500) return { level: 'warn', msg: `并发 ${n} 过高，超出多数路由器处理能力，建议 100–300` };
@@ -475,7 +475,7 @@ const FIELD_VALIDATORS = {
     const n = Number(v);
     if (n === 0 || _anyAutoMode()) {
       const { alive, speed, media, base } = _estimateAuto();
-      return { level: 'ok', msg: `自适应模式（基准 =${base}）· 测活 ≈ ${alive} · 测速 ≈ ${speed} · 媒体 ≈ ${media}` };
+      return { level: 'ok', msg: `自适应模式（基准 =${base}）· 测速 ≈ ${speed}` };
     }
     if (n > 32) return { level: 'warn', msg: `并发 ${n} 较高，测速会占用大量带宽，建议配合 total-speed-limit` };
     return null;
@@ -485,7 +485,7 @@ const FIELD_VALIDATORS = {
     const n = Number(v);
     if (n === 0 || _anyAutoMode()) {
       const { alive, speed, media, base } = _estimateAuto();
-      return { level: 'ok', msg: `自适应模式（基准 =${base}）· 测活 ≈ ${alive} · 测速 ≈ ${speed} · 媒体 ≈ ${media}` };
+      return { level: 'ok', msg: `自适应模式（基准 =${base}）· 媒体 ≈ ${media}` };
     }
     if (n > 200) return { level: 'warn', msg: `并发 ${n} 较高，建议不超过 200` };
     if (n > 0 && n <= 100) return { level: 'info', msg: `并发 ${n} 合理` };
