@@ -459,14 +459,14 @@
 .cfg-label-hint .cfg-hint-code {
   display: inline-flex;
   align-items: center;
-  height: 14px;
-  padding: 2px 4px 0; /* ← bottom +1px 补偿 descender 视差 */
+  height: 16px;
+  padding: 2px 4px 2px;
   margin-bottom: 2px;
   margin-right: 2px;
   border-radius: 3px;
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', 'Consolas', monospace);
   font-size: 9.5px;
-  line-height: 1;
+  line-height: 1.2;
   font-weight: 500;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
