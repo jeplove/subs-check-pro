@@ -941,6 +941,7 @@ function mkUrlList(field, values) {
     const row = el('div', { class: 'cfg-url-item' });
     const inp = el('textarea', {
       class: 'cfg-input cfg-url-input',
+      rows: '1',
       placeholder: 'https://',
       spellcheck: 'false',
       autocomplete: 'off',
@@ -949,12 +950,29 @@ function mkUrlList(field, values) {
     });
     inp.value = val;
 
-    /* 自动撑高：field-sizing 不支持时的兜底 */
+    let _singleLineH = 0;   // ← 每个输入框独立缓存单行基线
+
     const autoResize = () => {
       if (!inp.matches(':focus') && !wrap.classList.contains('wrap-mode')) return;
+
       inp.style.height = 'auto';
-      inp.style.height = Math.min(inp.scrollHeight, 300) + 'px';
+      let sh = inp.scrollHeight;
+
+      if (!_singleLineH) {
+        const pv = inp.value;
+        inp.value = 'x'; // 填入单字符获取真实的单行文本高度
+        _singleLineH = inp.scrollHeight;
+        inp.value = pv;
+        sh = inp.scrollHeight; // 还原文本后重新获取当前内容的真实高度
+      }
+
+      if (wrap.classList.contains('wrap-mode') || sh > _singleLineH) {
+        inp.style.height = Math.min(sh, 300) + 'px';
+      } else {
+        inp.style.height = ''; // 单行且未处于折行模式时，清除内联高度，回退使用 CSS 的默认 32px
+      }
     };
+
     inp.addEventListener('input', autoResize);
     inp.addEventListener('focus', autoResize);
     inp.addEventListener('blur', () => { inp.style.height = ''; });

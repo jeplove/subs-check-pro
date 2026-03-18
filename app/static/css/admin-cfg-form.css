@@ -1108,10 +1108,8 @@
   white-space: pre-wrap;
   overflow-x: hidden;
   overflow-y: hidden; /* 不需要滚动条，内容撑高 */
-  height: auto;
   min-height: 32px;
   max-height: 300px;
-  field-sizing: content; /* 现代浏览器自动撑高 */
 }
 
 .cfg-url-toolbar {
@@ -1597,6 +1595,19 @@
     width: 32px;
     height: 34px;
     font-size: 18px;
+  }
+
+  .cfg-url-item .cfg-url-input {
+    height: 38px; /* 增加移动端输入框基础高度 */
+    line-height: 1.4; /* 恢复正常行高，防止字体基线下沉 */
+    padding-top: 7px; /* 重新分配内边距实现几何居中 (38-2-22.4)/2 ≈ 7 */
+    padding-bottom: 7px;
+  }
+
+  /* 同步增加 focus 和 折行模式下的最小高度限制 */
+  .cfg-url-item .cfg-url-input:focus,
+  .cfg-url-list.wrap-mode .cfg-url-input {
+    min-height: 38px;
   }
 
   /* 预览面板铺满全屏 */
