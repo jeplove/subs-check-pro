@@ -25,9 +25,13 @@ const SCHEMA = [
         title: '检测计划',
         fields: [
           {
-            key: 'cron-expression', label: 'Cron 表达式', type: 'cron', fullWidth: true, placeholder: '0 4,16 * * *', hint: '优先级高于检测间隔；推荐凌晨 4 点和 16 点执行',
-            hintExamples: [
-              '0 4,16 * * *',
+            key: 'cron-expression', label: 'Cron 表达式', type: 'cron', fullWidth: true,
+            placeholder: '0 4,16 * * *',
+            hint: '优先级高于检测间隔；推荐凌晨 4 点和 16 点执行',
+            hintExamples: ['0 4,16 * * *'],
+            links: [
+              { label: 'Cron 语法文档', href: 'https://pkg.go.dev/github.com/robfig/cron#hdr-CRON_Expression_Format', icon: 'docs' },
+              { label: '在线测试', href: 'https://crontab.guru', icon: 'link' },
             ],
           },
           { key: 'check-interval', label: '检测间隔 (分钟)', type: 'number', min: 1, placeholder: '720', hint: 'Cron 为空时生效；建议 720–1440' },
@@ -1411,13 +1415,14 @@ function _bindCronInterval(panel) {
   const cronInput = cronRow.querySelector('input[data-key="cron-expression"]');
   if (!cronInput) return;
 
-  /* 徽标：插在 Cron 行与检测间隔行之间 */
+  /* badge 插到 cronRow 内部 hint/links 之后，而非行间 */
   const badge = el('div', {
     class: 'cfg-cron-badge',
     role: 'button',
     tabindex: '0',
   });
-  cronRow.after(badge);
+  // 追加到 cronRow 末尾（在 .cfg-ctrl 之后）
+  cronRow.appendChild(badge);
 
   /* 需要禁用的控件 */
   const intervalControls = [
