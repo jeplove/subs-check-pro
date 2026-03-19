@@ -77,7 +77,12 @@ const SCHEMA = [
         fields: [
           { key: 'sub-urls-retry', label: '重试次数', type: 'number', min: 1, max: 5, placeholder: '3', hint: '获取订阅失败重试次数' },
           { key: 'sub-urls-timeout', label: '下载超时 (s)', type: 'number', min: 5, max: 30, placeholder: '10', hint: '建议 10–60' },
-          { key: 'success-rate', label: '成功率阈值 (%)', type: 'number', min: 0.01, max: 100, placeholder: '0', hint: '低于此值将标记订阅失效' },
+          {
+            key: 'success-rate', label: '成功率提醒阈值 (‰)', type: 'number', min: 0.01, max: 1000, placeholder: '0', hint: '低于此值将打印成功率信息，并写入统计文件',
+            hintExamples: [
+              "subs-filter.yaml"
+            ]
+          },
         ],
       },
       {
@@ -549,13 +554,42 @@ const FIELD_VALIDATORS = {
   'download-timeout': v => { if (Number(v) === 0) return { level: 'warn', msg: '未设置，极慢节点会阻塞测速队列，建议设为 10s' }; if (Number(v) > 15) return { level: 'warn', msg: '下载超时不宜设置过高，节点易被测死' }; return null; },
   'download-mb': v => { if (Number(v) === 0) return { level: 'info', msg: '未限制单节点下载量，高并发时可能消耗大量流量，建议 20 MB' }; if (Number(v) >= 100) return { level: 'warn', msg: '过大的下载量将对代理节点造成较大压力，建议 20 MB' }; return null; },
   'success-limit': v => { const n = Number(v); if (n > 0 && n < 5) return { level: 'info', msg: `保存上限 ${n} 较少，建议 100-200` }; if (n >= 100 && n < 200) return { level: 'info', msg: `保存上限 ${n}，视手机性能，mihomo 类 VPN 超过 100 个节点会增加分组切换压力` }; if (n > 200) return { level: 'warn', msg: `保存上限 ${n} 较多，建议不超过 200` }; return null; },
-  /* success-rate 校验：入参为界面显示值（0–100%），存储值为其 ÷100 */
+
+  /* success-rate 校验：入参为界面显示值（0–100%），存储值为其 ÷1000 */
   'success-rate': v => {
     const n = Number(v);
-    if (n === 0) return { level: 'info', msg: '0 = 不过滤，所有订阅均保留' };
-    if (n > 0 && n < 0.1) return { level: 'info', msg: `阈值 ${n}% 合理，仅过滤几乎完全失效的订阅源` };
-    if (n > 20) return { level: 'warn', msg: `阈值 ${n}% 过高，可能误删大量正常订阅` };
-    return null;
+
+    // 辅助函数：根据数值选择显示单位
+    const formatRate = (val) => {
+      if (val < 10) {
+        // <1% 时显示千分比
+        return `${val}‰`;
+      }
+      // ≥1% 时显示百分比
+      return `${(val / 10).toFixed(1)}%`;
+    };
+
+    if (n === 0) {
+      return { level: 'info', msg: '0 = 不打印成功率信息' };
+    }
+    if (n > 0 && n <= 10) {
+      return { level: 'ok', msg: `阈值 ${formatRate(n)} 推荐，仅打印几乎完全失效的订阅源信息` };
+    }
+    if (n > 10 && n <= 50) {
+      return { level: 'info', msg: `阈值 ${formatRate(n)}` };
+    }
+    if (n > 50 && n <= 100) {
+      return { level: 'warn', msg: `阈值 ${formatRate(n)} 考验订阅压力，将打印更多订阅成功率信息` };
+    }
+    if (n > 100 && n <= 300) {
+      return { level: 'warn', msg: `阈值 ${formatRate(n)} 达标订阅比较少，打印成功率信息将淹没日志` };
+    }
+    if (n > 300) {
+      return { level: 'warn', msg: `阈值 ${formatRate(n)} 过高，打印成功率信息将淹没日志` };
+    }
+
+    // 兜底提示
+    return { level: 'info', msg: `阈值 ${formatRate(n)} 已应用` };
   },
 };
 
@@ -573,12 +607,12 @@ const VALUE_TRANSFORM = {
   'success-rate': {
     load: v => {
       if (v == null || v === '') return v;
-      return +(Number(v) * 100).toFixed(4);   // 0.03 → 3.0（避免浮点尾巴）
+      return +(Number(v) * 1000).toFixed(4);   // 0.03 → 3.0（避免浮点尾巴）
     },
     save: v => {
       const n = parseFloat(v);
       if (isNaN(n)) return 0;
-      return +(n / 100).toFixed(6);            // 3 → 0.03
+      return +(n / 1000).toFixed(6);            // 3 → 0.03
     },
   },
   // sub-process.regex-filter-keep：后端存 bool，select 控件存 "true"/"false" 字符串
