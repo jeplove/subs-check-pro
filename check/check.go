@@ -145,10 +145,7 @@ func calcSpeedConcurrency(proxyCount int) int {
 
 // NewProxyChecker 创建新的检测器实例
 func NewProxyChecker(proxyCount int) *ProxyChecker {
-	threadCount := config.GlobalConfig.Concurrent
-	if proxyCount < threadCount {
-		threadCount = proxyCount
-	}
+	threadCount := min(proxyCount, config.GlobalConfig.Concurrent)
 
 	cAlive := config.GlobalConfig.AliveConcurrent
 	cSpeed := config.GlobalConfig.SpeedConcurrent
@@ -760,9 +757,7 @@ func (pc *ProxyChecker) runMediaStageAndCollect(db *maxminddb.Reader, ctx contex
 				}
 
 				if mediaON {
-					for _, plat := range config.GlobalConfig.Platforms {
-						mediaCheck(job, plat, db, ctx)
-					}
+					mediaCheck(job, db, ctx)
 				}
 
 				pc.updateProxyName(&job.Result, job.Client, job.Speed, db, job.CfLoc, job.CfIP, ctx)
@@ -814,21 +809,30 @@ func needsCF(platforms []string) bool {
 	return false
 }
 
-// mediaCheck 根据平台类型分发到相应的检测函数。
-func mediaCheck(job *ProxyJob, plat string, db *maxminddb.Reader, ctx context.Context) {
-
-	// 设置流媒体/AI检测独立的超时时间
+// mediaCheck 并发检测所有媒体解锁平台
+func mediaCheck(job *ProxyJob, db *maxminddb.Reader, ctx context.Context) {
 	mediaTimeout := config.GlobalConfig.MediaCheckTimeout
 	if mediaTimeout <= 0 {
-		mediaTimeout = 10 // 默认 10 秒
+		mediaTimeout = 10
 	}
 
-	// 构造 mediaClient
 	mediaClient := &http.Client{
 		Transport: job.Client.Client.Transport,
 		Timeout:   time.Duration(mediaTimeout) * time.Second,
 	}
 
+	plats := config.GlobalConfig.Platforms
+	var wg sync.WaitGroup
+	for _, plat := range plats {
+		wg.Go(func() {
+			checkOnePlatform(job, plat, mediaClient, db, ctx)
+		})
+	}
+	wg.Wait()
+}
+
+// mediaCheck 根据平台类型分发到相应的检测函数。
+func checkOnePlatform(job *ProxyJob, plat string, mediaClient *http.Client, db *maxminddb.Reader, ctx context.Context) {
 	switch plat {
 	case "x":
 		if job.NeedCF && !job.IsCfAccessible {

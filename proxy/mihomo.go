@@ -9,6 +9,7 @@ import (
 
 // ConvertsV2RayExtra convert V2Ray subscribe proxies data to mihomo proxies config
 func ConvertsV2RayExtra(buf []byte) ([]map[string]any, error) {
+	// TODO: 支持更多非标格式，支持标准mieru分享格式
 	data := DecodeBase64(buf)
 
 	arr := strings.Split(string(data), "\n")
