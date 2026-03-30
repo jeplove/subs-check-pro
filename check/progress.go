@@ -12,6 +12,7 @@ import (
 
 // CurrentStepName 用于 UI 显示当前阶段名称
 var CurrentStepName atomic.Value
+var AliveCount atomic.Uint32 // 存储测活可用节点
 
 // ProgressWeight 不同检测阶段的进度权重
 type ProgressWeight struct {
@@ -85,6 +86,7 @@ func getCheckWeight(speedON, mediaON bool) ProgressWeight {
 // CountAlive 标记一个存活检测已完成，并更新进度。
 func (pt *ProgressTracker) CountAlive(success bool) {
 	pt.aliveDone.Add(1)
+	AliveCount.Add(1)
 	if success {
 		pt.aliveSuccess.Add(1)
 	}
@@ -122,6 +124,11 @@ func (pt *ProgressTracker) FinishAliveStage() {
 		pt.currentStage.Store(2) // 跳过测速，直接进入媒体检测阶段
 	}
 
+	if !speedON && !mediaON && config.GlobalConfig.RenameNode {
+		pt.currentStage.Store(-1)
+		CurrentStepName.Store("重命名")
+	}
+
 	pt.refresh()
 }
 
@@ -138,6 +145,12 @@ func (pt *ProgressTracker) FinishSpeedStage() {
 	}
 	// 切换为媒体检测阶段
 	pt.currentStage.Store(2)
+
+	if !mediaON && config.GlobalConfig.RenameNode {
+		pt.currentStage.Store(-1)
+		CurrentStepName.Store("重命名")
+	}
+
 	pt.refresh()
 }
 
