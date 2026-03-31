@@ -53,20 +53,6 @@ var (
 	v2rayLinkRegexCompiled *regexp.Regexp
 )
 
-// ClearCache 检测结束后释放包级全局状态
-func ClearCache() {
-	uniqueSubsCount = 0
-
-	// 关闭所有复用 client 的连接池，释放 TLS session cache 和 idle conn
-	clientMapCache.Range(func(key, value any) bool {
-		if c, ok := value.(*http.Client); ok {
-			c.CloseIdleConnections()
-		}
-		clientMapCache.Delete(key)
-		return true
-	})
-}
-
 // --------核心解析入口--------
 
 // ParseProxyLinksAndConvert 统一处理链接列表
@@ -148,42 +134,30 @@ func ParseProxyLinksAndConvert(links []string, subURL string) []ProxyNode {
 
 	// 3. 批量转换剩余链接
 	if len(batchLinks) > 0 {
-		slog.Debug("链接块")
-		// 这里去重一下，避免因为逻辑重叠产生重复链接
-		batchLinks = lo.Uniq(batchLinks) // 去重
+		batchLinks = lo.Uniq(batchLinks)
 		for _, link := range batchLinks {
 			slog.Debug("link", "value", link)
 		}
-
 		data := []byte(strings.Join(batchLinks, "\n"))
 
-		if nodes, err := convert.ConvertsV2Ray(data); err == nil {
-			slog.Debug("转换v2ray成功", "数量", len(nodes))
+		// 两个转换器始终都跑，结果合并
+		// ConvertsV2Ray    处理标准协议链接（mihomo 原生支持）
+		// ConvertsV2RayExtra 处理非标准/扩展协议链接
+		// 二者各自只认识自己支持的部分，互不替代
+		if nodes, err := convert.ConvertsV2Ray(data); err == nil && len(nodes) > 0 {
+			slog.Debug("标准转换成功", "数量", len(nodes))
 			finalNodes = append(finalNodes, ToProxyNodes(nodes)...)
-		} else {
-			slog.Debug("转换失败", "错误", err)
-			// TODO: 有些格式V2ray未被mihomo格式转换支持，使用自定义转换
-			if nodes, err := ConvertsV2RayExtra(data); err == nil {
-				slog.Debug("使用自定义转换v2ray成功", "数量", len(nodes))
-				finalNodes = append(finalNodes, ToProxyNodes(nodes)...)
-			} else {
-				slog.Debug("转换失败", "错误", err)
-			}
-
 		}
+		if nodes, err := ConvertsV2RayExtra(data); err == nil && len(nodes) > 0 {
+			slog.Debug("扩展转换成功", "数量", len(nodes))
+			finalNodes = append(finalNodes, ToProxyNodes(nodes)...)
+		}
+
+		// 去重（同一链接可能被两个转换器都识别）
+		finalNodes = deduplicateNodes(finalNodes)
 	}
 
 	return finalNodes
-}
-
-// 辅助函数：快速检查字符串是否全为数字
-func isDigit(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // ConvertProtocolMap 处理非标准 JSON ({"vless": [...], "hysteria": [...]})
@@ -242,353 +216,10 @@ func ConvertProtocolMap(con map[string]any) []ProxyNode {
 	return ParseProxyLinksAndConvert(allLinks, "")
 }
 
-// ToProxyNodes 将 Mihomo 的转换结果 []map[string]any 转换为 []ProxyNode 并进行标准化
-func ToProxyNodes(list []map[string]any) []ProxyNode {
-	if list == nil {
-		return nil
-	}
-	res := make([]ProxyNode, len(list))
-	for i, v := range list {
-		// 立即进行标准化，防止后续处理遇到类型不一致问题
-		NormalizeNode(v)
-		res[i] = ProxyNode(v)
-	}
-	return res
-}
-
-// --------节点标准化与清洗--------
-
-// NormalizeNode 统一清洗节点字段，注入默认值
-// 将各种非标准或类型不确定的字段转换为 Clash/Mihomo 标准格式
-func NormalizeNode(m map[string]any) {
-	// 1. 端口标准化 (确保是 int)
-	if p, ok := m["port"]; ok {
-		m["port"] = ToIntPort(p)
-	}
-
-	// 2. 布尔值标准化 (防止 panic bug)
-	checkBool(m, "tls")
-	checkBool(m, "udp")
-	checkBool(m, "skip-cert-verify")
-	checkBool(m, "tfo")
-	checkBool(m, "allow-insecure")
-	// 次常用
-	if _, ok := m["xudp"]; ok {
-		checkBool(m, "xudp")
-	}
-	if _, ok := m["reuse-addr"]; ok {
-		checkBool(m, "reuse-addr")
-	}
-	if _, ok := m["disable-sni"]; ok {
-		checkBool(m, "disable-sni")
-	}
-
-	// 3. 协议特定修正与默认值注入
-	if t, ok := m["type"].(string); ok {
-		t = strings.ToLower(t)
-		m["type"] = t
-
-		switch t {
-		case "trojan":
-			m["tls"] = true
-		case "https":
-			// 只有明确写为 type: https 时，才强制转换并开启 TLS
-			m["type"] = "http"
-			m["tls"] = true
-		case "http":
-			// 标准 HTTP 代理，不做强制 TLS 设置
-			// 除非端口是 443 且未指定 TLS，否则保持原样或默认 false
-			if _, hasTLS := m["tls"]; !hasTLS {
-				// 启发式：如果是 443 端口，大概率是 HTTPS
-				if p, ok := m["port"].(int); ok && p == 443 {
-					m["tls"] = true
-				} else {
-					m["tls"] = false
-				}
-			}
-		case "hysteria2", "hy2":
-			if val, exists := m["obfs_password"]; exists {
-				m["obfs-password"] = val
-				delete(m, "obfs_password")
-			}
-		case "vmess", "vless":
-			if val, ok := m["security"].(string); ok && strings.EqualFold(val, "tls") {
-				m["tls"] = true
-			}
-		}
-	}
-
-	// 4. 处理扁平化的 WS 字段
-	normalizeWsFields(m)
-}
-
-func normalizeWsFields(m map[string]any) {
-	// 只有当明确存在 key 时才进行后续 map 分配操作
-	pathV, hasPath := m["ws-path"]
-	headV, hasHead := m["ws-headers"]
-
-	if !hasPath && !hasHead {
-		return
-	}
-
-	if hasPath {
-		delete(m, "ws-path")
-	}
-	if hasHead {
-		delete(m, "ws-headers")
-	}
-
-	wsOpts, ok := m["ws-opts"].(map[string]any)
-	if !ok {
-		// 懒分配：仅在需要时创建 map
-		wsOpts = make(map[string]any, 2)
-	}
-
-	if hasPath {
-		wsOpts["path"] = pathV
-	}
-	if hasHead {
-		wsOpts["headers"] = headV
-	}
-
-	m["ws-opts"] = wsOpts
-	if _, ok := m["network"]; !ok {
-		m["network"] = "ws"
-	}
-}
-
-// checkBool 强制将 map 中的特定字段转换为 bool 类型
-// 规避 Mihomo decoder 在处理 uint 转 bool 时的 panic bug
-func checkBool(m map[string]any, key string) {
-	val, ok := m[key]
-	if !ok {
-		return
-	}
-
-	switch v := val.(type) {
-	case bool:
-		return
-	case int:
-		m[key] = v != 0
-	case string:
-		// 快速路径：常见值检查
-		switch v {
-		case "true", "1":
-			m[key] = true
-		case "false", "0":
-			m[key] = false
-		default:
-			// 无法识别则删除，比保留字符串导致的 panic 好
-			delete(m, key)
-		}
-	// 处理 json 数字解码可能的类型
-	case float64:
-		m[key] = v != 0
-	case int64:
-		m[key] = v != 0
-	default:
-		// 其他情况尝试转 string
-		s := toString(v)
-		if s == "true" || s == "1" {
-			m[key] = true
-		} else {
-			m[key] = false
-		}
-	}
-}
-
-// FixupProxyLink 修复非标准链接头
-func FixupProxyLink(link string) string {
-	// 常见错误：hy:// 应为 hysteria://
-	if len(link) > 4 {
-		if strings.HasPrefix(link, "hy://") {
-			return "hysteria://" + link[5:]
-		}
-		if strings.HasPrefix(link, "hy2://") {
-			return "hysteria2://" + link[6:]
-		}
-	}
-	return link
-}
-
-// ToIntPort 极其宽容的端口转换函数
-func ToIntPort(v any) int {
-	if v == nil {
-		return 0
-	}
-	switch val := v.(type) {
-	case int:
-		return val
-	case float64:
-		return int(val)
-	case string:
-		if val == "" {
-			return 0
-		}
-		// 尝试解析 "443" 或 "443.0"
-		// 使用 Cut 去掉可能的 .0
-		if before, _, found := strings.Cut(val, "."); found {
-			if i, err := strconv.Atoi(before); err == nil {
-				return i
-			}
-		} else {
-			if i, err := strconv.Atoi(val); err == nil {
-				return i
-			}
-		}
-		return 0
-	case int64:
-		return int(val)
-	case uint:
-		return int(val)
-	case uint16:
-		return int(val)
-	case float32:
-		return int(val)
-	default:
-		// 最后的兜底，极少进入
-		s := toString(v)
-		if i, err := strconv.Atoi(s); err == nil {
-			return i
-		}
-		return 0
-	}
-}
-
-// --------基础工具--------
-
-func EnsureScheme(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.Contains(s, "://") {
-		return s
-	}
-
-	if strings.HasPrefix(s, "127.0.0.1") || strings.HasPrefix(s, "localhost") {
-		return "http://" + s
-	}
-
-	// Github 默认 HTTPS
-	if strings.HasPrefix(s, "raw.githubusercontent.com/") || strings.HasPrefix(s, "github.com/") {
-		return "https://" + s
-	}
-
-	// 本地环境默认 HTTP
-	if utils.IsLocalURL(strings.Split(s, ":")[0]) {
-		return "http://" + s
-	}
-
-	return "http://" + s
-}
-
-func SplitHostPortLoose(hp string) (string, string) {
-	if hp == "" {
-		return "", ""
-	}
-	if host, port, err := net.SplitHostPort(hp); err == nil {
-		return host, port
-	}
-	// 回退逻辑：取最后一个冒号
-	lastColon := strings.LastIndexByte(hp, ':')
-	if lastColon > 0 && lastColon < len(hp)-1 {
-		// 排除 IPv6 的情况 (冒号在方括号内)
-		// 简单 heuristic: 如果有 ']' 且位置在冒号之后，那这个冒号可能不是端口分隔符
-		// 但通常 [::1]:8080，LastIndexByte 找到的是最后一个冒号，肯定是端口
-		// 唯独 [::1] 这种没有端口的纯 IPv6 需要注意
-		if hp[len(hp)-1] == ']' {
-			return hp, ""
-		}
-		return hp[:lastColon], hp[lastColon+1:]
-	}
-	return hp, ""
-}
-
 // var (
 // 	sortedProtocolKeys     []string
 // 	sortedProtocolKeysOnce sync.Once
 // )
-
-// guessSchemeByURL 根据 URL 文件名猜测协议
-func guessSchemeByURL(raw string) string {
-	// uParsed, err := url.Parse(raw)
-	// if err != nil {
-	// 	return "" // 解析失败，无法提取文件名，放弃猜测
-	// }
-
-	// filename := strings.ToLower(filepath.Base(uParsed.Path))
-	pathStr := raw
-	if idx := strings.Index(pathStr, "://"); idx >= 0 {
-		pathStr = pathStr[idx+3:]
-	}
-	// 去掉 query/fragment
-	if idx := strings.IndexAny(pathStr, "?#"); idx >= 0 {
-		pathStr = pathStr[:idx]
-	}
-	// 获取 base
-	filename := filepath.Base(pathStr)
-	filename = strings.ToLower(filename)
-
-	// 去掉扩展名
-	if idx := strings.LastIndexByte(filename, '.'); idx > 0 {
-		filename = filename[:idx]
-	}
-
-	// // 初始化排序后的 Key 列表 (仅执行一次)
-	// sortedProtocolKeysOnce.Do(func() {
-	// 	keys := lo.Keys(protocolSchemes)
-	// 	// 只有不在 protocolSchemes 里的才需要加到 extras
-	// 	extras := []string{"http2"}
-	// 	keys = append(keys, extras...)
-	// 	keys = lo.Uniq(keys)
-
-	// 	// 按长度降序排序
-	// 	sort.Slice(keys, func(i, j int) bool {
-	// 		return len(keys[i]) > len(keys[j])
-	// 	})
-	// 	sortedProtocolKeys = keys
-	// })
-
-	// 直接使用手动排序后的列表
-	for _, key := range sortedProtocolKeys {
-		if strings.Contains(filename, key) {
-			if _, ok := protocolSchemes[key]; ok {
-				return key
-			}
-			if key == "http2" {
-				return "https"
-			}
-		}
-	}
-
-	if strings.Contains(filename, "all") {
-		return "all"
-	}
-	// 3. 如果文件名没有特征（比如 "nodes.txt"），返回空字符串意味着“未知协议”
-	return ""
-}
-
-// TryDecodeBase64 尝试 Base64 解码，失败则返回原数据
-func TryDecodeBase64(data []byte) []byte {
-	s := string(bytes.TrimSpace(data))
-	if len(s) == 0 {
-		return data
-	}
-
-	// 按命中概率排序
-	if d, err := base64.RawURLEncoding.DecodeString(s); err == nil {
-		return d
-	}
-	if d, err := base64.StdEncoding.DecodeString(s); err == nil {
-		return d
-	}
-	if d, err := base64.URLEncoding.DecodeString(s); err == nil {
-		return d
-	}
-	if d, err := base64.RawStdEncoding.DecodeString(s); err == nil {
-		return d
-	}
-
-	return data
-}
 
 // --------正则提取逻辑--------
 
@@ -1333,6 +964,153 @@ func ParseSingBoxWithMetadata(data []byte) []ProxyNode {
 	return nil
 }
 
+// --------基础工具--------
+
+func deduplicateNodes(nodes []ProxyNode) []ProxyNode {
+	if len(nodes) == 0 {
+		return nodes
+	}
+	seen := make(map[string]struct{}, len(nodes))
+	out := nodes[:0] // 原地复用，减少分配
+	for _, n := range nodes {
+		k := proxyNodeKey(n)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
+func EnsureScheme(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "://") {
+		return s
+	}
+
+	if strings.HasPrefix(s, "127.0.0.1") || strings.HasPrefix(s, "localhost") {
+		return "http://" + s
+	}
+
+	// Github 默认 HTTPS
+	if strings.HasPrefix(s, "raw.githubusercontent.com/") || strings.HasPrefix(s, "github.com/") {
+		return "https://" + s
+	}
+
+	// 本地环境默认 HTTP
+	if utils.IsLocalURL(strings.Split(s, ":")[0]) {
+		return "http://" + s
+	}
+
+	return "http://" + s
+}
+
+func SplitHostPortLoose(hp string) (string, string) {
+	if hp == "" {
+		return "", ""
+	}
+	if host, port, err := net.SplitHostPort(hp); err == nil {
+		return host, port
+	}
+	// 回退逻辑：取最后一个冒号
+	lastColon := strings.LastIndexByte(hp, ':')
+	if lastColon > 0 && lastColon < len(hp)-1 {
+		// 排除 IPv6 的情况 (冒号在方括号内)
+		// 简单 heuristic: 如果有 ']' 且位置在冒号之后，那这个冒号可能不是端口分隔符
+		// 但通常 [::1]:8080，LastIndexByte 找到的是最后一个冒号，肯定是端口
+		// 唯独 [::1] 这种没有端口的纯 IPv6 需要注意
+		if hp[len(hp)-1] == ']' {
+			return hp, ""
+		}
+		return hp[:lastColon], hp[lastColon+1:]
+	}
+	return hp, ""
+}
+
+// guessSchemeByURL 根据 URL 文件名猜测协议
+func guessSchemeByURL(raw string) string {
+	// uParsed, err := url.Parse(raw)
+	// if err != nil {
+	// 	return "" // 解析失败，无法提取文件名，放弃猜测
+	// }
+
+	// filename := strings.ToLower(filepath.Base(uParsed.Path))
+	pathStr := raw
+	if idx := strings.Index(pathStr, "://"); idx >= 0 {
+		pathStr = pathStr[idx+3:]
+	}
+	// 去掉 query/fragment
+	if idx := strings.IndexAny(pathStr, "?#"); idx >= 0 {
+		pathStr = pathStr[:idx]
+	}
+	// 获取 base
+	filename := filepath.Base(pathStr)
+	filename = strings.ToLower(filename)
+
+	// 去掉扩展名
+	if idx := strings.LastIndexByte(filename, '.'); idx > 0 {
+		filename = filename[:idx]
+	}
+
+	// // 初始化排序后的 Key 列表 (仅执行一次)
+	// sortedProtocolKeysOnce.Do(func() {
+	// 	keys := lo.Keys(protocolSchemes)
+	// 	// 只有不在 protocolSchemes 里的才需要加到 extras
+	// 	extras := []string{"http2"}
+	// 	keys = append(keys, extras...)
+	// 	keys = lo.Uniq(keys)
+
+	// 	// 按长度降序排序
+	// 	sort.Slice(keys, func(i, j int) bool {
+	// 		return len(keys[i]) > len(keys[j])
+	// 	})
+	// 	sortedProtocolKeys = keys
+	// })
+
+	// 直接使用手动排序后的列表
+	for _, key := range sortedProtocolKeys {
+		if strings.Contains(filename, key) {
+			if _, ok := protocolSchemes[key]; ok {
+				return key
+			}
+			if key == "http2" {
+				return "https"
+			}
+		}
+	}
+
+	if strings.Contains(filename, "all") {
+		return "all"
+	}
+	// 3. 如果文件名没有特征（比如 "nodes.txt"），返回空字符串意味着“未知协议”
+	return ""
+}
+
+// TryDecodeBase64 尝试 Base64 解码，失败则返回原数据
+func TryDecodeBase64(data []byte) []byte {
+	s := string(bytes.TrimSpace(data))
+	if len(s) == 0 {
+		return data
+	}
+
+	// 按命中概率排序
+	if d, err := base64.RawURLEncoding.DecodeString(s); err == nil {
+		return d
+	}
+	if d, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return d
+	}
+	if d, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return d
+	}
+	if d, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return d
+	}
+
+	return data
+}
+
 // migrateOldFiles 迁移旧文件
 func migrateOldFiles(srcDir, fileName, targetDir string) error {
 	src := filepath.Join(srcDir, fileName)
@@ -1363,6 +1141,193 @@ func migrateOldFiles(srcDir, fileName, targetDir string) error {
 	return nil
 }
 
+// ClearCache 检测结束后释放包级全局状态
+func ClearCache() {
+	uniqueSubsCount = 0
+
+	// 关闭所有复用 client 的连接池，释放 TLS session cache 和 idle conn
+	clientMapCache.Range(func(key, value any) bool {
+		if c, ok := value.(*http.Client); ok {
+			c.CloseIdleConnections()
+		}
+		clientMapCache.Delete(key)
+		return true
+	})
+}
+
+// ToProxyNodes 将 Mihomo 的转换结果 []map[string]any 转换为 []ProxyNode 并进行标准化
+func ToProxyNodes(list []map[string]any) []ProxyNode {
+	if list == nil {
+		return nil
+	}
+	res := make([]ProxyNode, len(list))
+	for i, v := range list {
+		// 立即进行标准化，防止后续处理遇到类型不一致问题
+		NormalizeNode(v)
+		res[i] = ProxyNode(v)
+	}
+	return res
+}
+
+// --------节点标准化与清洗--------
+
+// NormalizeNode 统一清洗节点字段，注入默认值
+// 将各种非标准或类型不确定的字段转换为 Clash/Mihomo 标准格式
+func NormalizeNode(m map[string]any) {
+	// 1. 端口标准化 (确保是 int)
+	if p, ok := m["port"]; ok {
+		m["port"] = ToIntPort(p)
+	}
+
+	// 2. 布尔值标准化 (防止 panic bug)
+	checkBool(m, "tls")
+	checkBool(m, "udp")
+	checkBool(m, "skip-cert-verify")
+	checkBool(m, "tfo")
+	checkBool(m, "allow-insecure")
+	// 次常用
+	if _, ok := m["xudp"]; ok {
+		checkBool(m, "xudp")
+	}
+	if _, ok := m["reuse-addr"]; ok {
+		checkBool(m, "reuse-addr")
+	}
+	if _, ok := m["disable-sni"]; ok {
+		checkBool(m, "disable-sni")
+	}
+
+	// 3. 协议特定修正与默认值注入
+	if t, ok := m["type"].(string); ok {
+		t = strings.ToLower(t)
+		m["type"] = t
+
+		switch t {
+		case "trojan":
+			m["tls"] = true
+		case "https":
+			// 只有明确写为 type: https 时，才强制转换并开启 TLS
+			m["type"] = "http"
+			m["tls"] = true
+		case "http":
+			// 标准 HTTP 代理，不做强制 TLS 设置
+			// 除非端口是 443 且未指定 TLS，否则保持原样或默认 false
+			if _, hasTLS := m["tls"]; !hasTLS {
+				// 启发式：如果是 443 端口，大概率是 HTTPS
+				if p, ok := m["port"].(int); ok && p == 443 {
+					m["tls"] = true
+				} else {
+					m["tls"] = false
+				}
+			}
+		case "hysteria2", "hy2":
+			if val, exists := m["obfs_password"]; exists {
+				m["obfs-password"] = val
+				delete(m, "obfs_password")
+			}
+		case "vmess", "vless":
+			if val, ok := m["security"].(string); ok && strings.EqualFold(val, "tls") {
+				m["tls"] = true
+			}
+		}
+	}
+
+	// 4. 处理扁平化的 WS 字段
+	normalizeWsFields(m)
+}
+
+func normalizeWsFields(m map[string]any) {
+	// 只有当明确存在 key 时才进行后续 map 分配操作
+	pathV, hasPath := m["ws-path"]
+	headV, hasHead := m["ws-headers"]
+
+	if !hasPath && !hasHead {
+		return
+	}
+
+	if hasPath {
+		delete(m, "ws-path")
+	}
+	if hasHead {
+		delete(m, "ws-headers")
+	}
+
+	wsOpts, ok := m["ws-opts"].(map[string]any)
+	if !ok {
+		// 懒分配：仅在需要时创建 map
+		wsOpts = make(map[string]any, 2)
+	}
+
+	if hasPath {
+		wsOpts["path"] = pathV
+	}
+	if hasHead {
+		wsOpts["headers"] = headV
+	}
+
+	m["ws-opts"] = wsOpts
+	if _, ok := m["network"]; !ok {
+		m["network"] = "ws"
+	}
+}
+
+// FixupProxyLink 修复非标准链接头
+func FixupProxyLink(link string) string {
+	// 常见错误：hy:// 应为 hysteria://
+	if len(link) > 4 {
+		if strings.HasPrefix(link, "hy://") {
+			return "hysteria://" + link[5:]
+		}
+		if strings.HasPrefix(link, "hy2://") {
+			return "hysteria2://" + link[6:]
+		}
+	}
+	return link
+}
+
+// ToIntPort 极其宽容的端口转换函数
+func ToIntPort(v any) int {
+	if v == nil {
+		return 0
+	}
+	switch val := v.(type) {
+	case int:
+		return val
+	case float64:
+		return int(val)
+	case string:
+		if val == "" {
+			return 0
+		}
+		// 尝试解析 "443" 或 "443.0"
+		// 使用 Cut 去掉可能的 .0
+		if before, _, found := strings.Cut(val, "."); found {
+			if i, err := strconv.Atoi(before); err == nil {
+				return i
+			}
+		} else {
+			if i, err := strconv.Atoi(val); err == nil {
+				return i
+			}
+		}
+		return 0
+	case int64:
+		return int(val)
+	case uint:
+		return int(val)
+	case uint16:
+		return int(val)
+	case float32:
+		return int(val)
+	default:
+		// 最后的兜底，极少进入
+		s := toString(v)
+		if i, err := strconv.Atoi(s); err == nil {
+			return i
+		}
+		return 0
+	}
+}
+
 func toString(v interface{}) string {
 	switch val := v.(type) {
 	case string:
@@ -1380,5 +1345,55 @@ func toString(v interface{}) string {
 		return "false"
 	default:
 		return ""
+	}
+}
+
+// 辅助函数：快速检查字符串是否全为数字
+func isDigit(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// checkBool 强制将 map 中的特定字段转换为 bool 类型
+// 规避 Mihomo decoder 在处理 uint 转 bool 时的 panic bug
+func checkBool(m map[string]any, key string) {
+	val, ok := m[key]
+	if !ok {
+		return
+	}
+
+	switch v := val.(type) {
+	case bool:
+		return
+	case int:
+		m[key] = v != 0
+	case string:
+		// 快速路径：常见值检查
+		switch v {
+		case "true", "1":
+			m[key] = true
+		case "false", "0":
+			m[key] = false
+		default:
+			// 无法识别则删除，比保留字符串导致的 panic 好
+			delete(m, key)
+		}
+	// 处理 json 数字解码可能的类型
+	case float64:
+		m[key] = v != 0
+	case int64:
+		m[key] = v != 0
+	default:
+		// 其他情况尝试转 string
+		s := toString(v)
+		if s == "true" || s == "1" {
+			m[key] = true
+		} else {
+			m[key] = false
+		}
 	}
 }

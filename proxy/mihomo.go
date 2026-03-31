@@ -1,6 +1,7 @@
 package proxies
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -10,9 +11,13 @@ import (
 
 // ConvertsV2RayExtra convert V2Ray subscribe proxies data to mihomo proxies config
 func ConvertsV2RayExtra(buf []byte) ([]map[string]any, error) {
+	slog.Debug("解析非标mihomo格式")
 	// TODO: 支持更多非标格式，支持标准mieru分享格式
-	data := DecodeBase64(buf)
-
+	// 仅当整体内容不含明显协议头时才尝试 base64 解码
+	data := buf
+	if !bytes.Contains(buf, []byte("://")) {
+		data = DecodeBase64(buf)
+	}
 	arr := strings.Split(string(data), "\n")
 
 	proxies := make([]map[string]any, 0, len(arr))
@@ -36,6 +41,7 @@ func ConvertsV2RayExtra(buf []byte) ([]map[string]any, error) {
 			if err != nil {
 				continue
 			}
+
 			urlMieru, err := url.Parse("mieru://" + string(dcBuf))
 			if err != nil {
 				continue
@@ -94,7 +100,38 @@ func ConvertsV2RayExtra(buf []byte) ([]map[string]any, error) {
 			// }
 
 			proxies = append(proxies, mieru)
+		case "anytls":
+			// anytls://password@server:port?fp=chrome&alpn=h2,http/1.1&allowInsecure=1#name
+			urlAnyTLS, err := url.Parse(line)
+			if err != nil {
+				continue
+			}
 
+			query := urlAnyTLS.Query()
+			name := urlAnyTLS.Fragment
+			if name == "" {
+				name = urlAnyTLS.Host
+			}
+			name = uniqueName(names, name)
+
+			node := map[string]any{
+				"name":     name,
+				"type":     "anytls",
+				"server":   urlAnyTLS.Hostname(),
+				"port":     urlAnyTLS.Port(),
+				"password": urlAnyTLS.User.Username(),
+			}
+			if alpn := query.Get("alpn"); alpn != "" {
+				node["alpn"] = strings.Split(alpn, ",")
+			}
+			if fp := query.Get("fp"); fp != "" {
+				node["client-fingerprint"] = fp
+			}
+			if query.Get("allowInsecure") == "1" || query.Get("insecure") == "1" {
+				node["skip-cert-verify"] = true
+			}
+
+			proxies = append(proxies, node)
 		}
 	}
 

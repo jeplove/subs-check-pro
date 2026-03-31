@@ -358,17 +358,14 @@ func parseSubscriptionData(data []byte, subURL string) ([]ProxyNode, error) {
 	if err := yaml.Unmarshal(data, &generic); err == nil {
 		switch val := generic.(type) {
 		case map[string]any:
-			// Clash 格式
 			if proxies, ok := val["proxies"].([]any); ok {
 				slog.Debug("解析成功", "订阅", subURL, "格式", "Mihomo/Clash")
 				return convertListToNodes(proxies), nil
 			}
-			// Sing-Box 纯 JSON 格式
 			if outbounds, ok := val["outbounds"].([]any); ok {
 				slog.Debug("解析成功", "订阅", subURL, "格式", "Sing-Box(JSON)")
 				return ConvertSingBoxOutbounds(outbounds), nil
 			}
-			// 非标准 JSON (协议名为 Key, e.g. {"vless": [...], "hysteria": [...]})
 			if nodes := ConvertProtocolMap(val); len(nodes) > 0 {
 				slog.Debug("解析成功", "订阅", subURL, "格式", "Non-Standard JSON", "数量", len(nodes))
 				return nodes, nil
@@ -394,51 +391,74 @@ func parseSubscriptionData(data []byte, subURL string) ([]ProxyNode, error) {
 		}
 	}
 
-	// 尝试 Base64/V2Ray 标准转换
-	if nodes, err := convert.ConvertsV2Ray(data); err == nil && len(nodes) > 0 {
-		slog.Debug("解析成功", "订阅", subURL, "格式", "Base64/V2Ray", "数量", len(nodes))
-		return ToProxyNodes(nodes), nil
-	}
+	// ---------------------------------------------------------------
+	// 以下均为「行级」格式：同一文件可能同时命中多个解析器
+	// （例如：标准 vless:// + 非标准 mihomo 链接混合）
+	// 统一收集、去重合并，不再短路返回
+	// ---------------------------------------------------------------
+	return parseLineBasedFormats(data, subURL)
+}
 
-	// 针对 "局部合法、全局非法" 的多段 proxies 文件
-	if nodes := ExtractAndParseProxies(data); len(nodes) > 0 {
-		slog.Debug("解析成功", "订阅", subURL, "格式", "Multipart Proxies", "数量", len(nodes))
-		return nodes, nil
-	}
+// parseLineBasedFormats 处理所有行级格式，收集全部结果后去重合并
+func parseLineBasedFormats(data []byte, subURL string) ([]ProxyNode, error) {
+	seen := make(map[string]struct{})
+	var merged []ProxyNode
 
-	// 尝试逐行 YAML 流式解析
-	if nodes := ParseYamlFlowList(data); len(nodes) > 0 {
-		slog.Debug("解析成功", "订阅", subURL, "格式", "YAML Flow List", "数量", len(nodes))
-		return nodes, nil
-	}
-
-	// 尝试 Surge/Surfboard 格式
-	if bytes.Contains(data, []byte("=")) && (bytes.Contains(data, []byte("[VMess]")) || bytes.Contains(data, []byte(", 20"))) {
-		if nodes := ParseSurfboardProxies(data); len(nodes) > 0 {
-			slog.Debug("解析成功", "订阅", subURL, "格式", "Surfboard/Surge", "数量", len(nodes))
-			return nodes, nil
+	add := func(nodes []ProxyNode, format string) {
+		before := len(merged)
+		for _, n := range nodes {
+			k := proxyNodeKey(n)
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			merged = append(merged, n)
+		}
+		if added := len(merged) - before; added > 0 {
+			slog.Debug("行级解析命中", "订阅", subURL, "格式", format, "新增", added)
 		}
 	}
 
-	// 尝试 xray JSON
-	if nodes := ParseV2RayJSONLines(data); len(nodes) > 0 {
-		slog.Debug("解析成功", "订阅", subURL, "格式", "V2Ray JSON Lines", "数量", len(nodes))
-		return nodes, nil
+	// ① Base64/V2Ray 标准转换
+	//    处理整体 base64 编码的订阅（不能省略，parseRawLines 无法处理 base64 blob）
+	if nodes, err := convert.ConvertsV2Ray(data); err == nil && len(nodes) > 0 {
+		add(ToProxyNodes(nodes), "Base64/V2Ray")
 	}
 
-	// 尝试自定义 Bracket KV 格式 ([Type]Name=...)
-	if nodes := ParseBracketKVProxies(data); len(nodes) > 0 {
-		slog.Debug("解析成功", "订阅", subURL, "格式", "Bracket KV", "数量", len(nodes))
-		return nodes, nil
+	// ② 逐行解析（含 ConvertsV2RayExtra，处理非标准链接）
+	//    与 ① 互补：① 不认识的行，② 的 ConvertsV2RayExtra 可能认识
+	add(parseRawLines(data, subURL), "Raw Lines")
+
+	// ③ 局部合法的多段 proxies 块
+	add(ExtractAndParseProxies(data), "Multipart Proxies")
+
+	// ④ 逐行 YAML flow 格式
+	add(ParseYamlFlowList(data), "YAML Flow List")
+
+	// ⑤ Surge/Surfboard
+	if bytes.Contains(data, []byte("=")) &&
+		(bytes.Contains(data, []byte("[VMess]")) || bytes.Contains(data, []byte(", 20"))) {
+		add(ParseSurfboardProxies(data), "Surfboard/Surge")
 	}
 
-	// 最后尝试按行猜测
-	if nodes := parseRawLines(data, subURL); len(nodes) > 0 {
-		slog.Debug("解析成功", "订阅", subURL, "格式", "Raw Lines (Guess)", "数量", len(nodes))
-		return nodes, nil
+	// ⑥ xray JSON lines
+	add(ParseV2RayJSONLines(data), "V2Ray JSON Lines")
+
+	// ⑦ Bracket KV 格式
+	add(ParseBracketKVProxies(data), "Bracket KV")
+
+	if len(merged) > 0 {
+		slog.Debug("行级解析完成", "订阅", subURL, "总数量", len(merged))
+		return merged, nil
 	}
 
 	return nil, fmt.Errorf("未知格式")
+}
+
+// proxyNodeKey 生成节点去重 key
+func proxyNodeKey(n ProxyNode) string {
+	// type + server + port 足以区分不同节点；name 故意不参与，避免同节点改名后重复
+	return fmt.Sprintf("%v|%v|%v", n["type"], n["server"], n["port"])
 }
 
 // parseRawLines 读取纯文本行并交给统一解析器
@@ -479,6 +499,38 @@ func convertListToNodes(list []any) []ProxyNode {
 		}
 	}
 	return res
+}
+
+// extractClashProviderURLs 从 Clash/Mihomo 配置中提取 proxy-providers 的 url
+func extractClashProviderURLs(m map[string]any) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := []string{"proxy-providers", "proxy_providers", "proxyproviders"}
+	out := make([]string, 0, 8)
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok || v == nil {
+			continue
+		}
+		providers, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, prov := range providers {
+			pm, ok := prov.(map[string]any)
+			if !ok {
+				continue
+			}
+			if u, ok := pm["url"].(string); ok {
+				u = strings.TrimSpace(u)
+				if u != "" {
+					out = append(out, u)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // FetchSubsData 获取数据 (包含重试、占位符处理、代理策略)
@@ -954,38 +1006,6 @@ func replaceDatePlaceholders(s string, t time.Time) string {
 func isLocalRequest(u *url.URL) bool {
 	return utils.IsLocalURL(u.Hostname()) &&
 		(strings.Contains(u.Fragment, "Keep") || strings.Contains(u.Path, "history") || strings.Contains(u.Path, "all"))
-}
-
-// extractClashProviderURLs 从 Clash/Mihomo 配置中提取 proxy-providers 的 url
-func extractClashProviderURLs(m map[string]any) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := []string{"proxy-providers", "proxy_providers", "proxyproviders"}
-	out := make([]string, 0, 8)
-	for _, k := range keys {
-		v, ok := m[k]
-		if !ok || v == nil {
-			continue
-		}
-		providers, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, prov := range providers {
-			pm, ok := prov.(map[string]any)
-			if !ok {
-				continue
-			}
-			if u, ok := pm["url"].(string); ok {
-				u = strings.TrimSpace(u)
-				if u != "" {
-					out = append(out, u)
-				}
-			}
-		}
-	}
-	return out
 }
 
 func logFatal(err error, urlStr string) {
