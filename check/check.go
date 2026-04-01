@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"regexp"
@@ -290,13 +289,13 @@ func Check() ([]Result, error) {
 // Run 运行检测流程
 func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	// 限速设置
-	if limit := config.GlobalConfig.TotalSpeedLimit; limit > 0 {
-		rate := float64(limit * 1024 * 1024)
-		capacity := int64(rate / 10)
-		Bucket = ratelimit.NewBucketWithRate(rate, capacity)
-	} else {
-		Bucket = ratelimit.NewBucketWithRate(float64(math.MaxInt64), int64(math.MaxInt64))
+	limit := config.GlobalConfig.TotalSpeedLimit
+	if limit <= 0 {
+		limit = 100 // 默认最大 100MB/s
 	}
+	rate := float64(limit) * 1024 * 1024
+	capacity := int64(rate / 10)
+	Bucket = ratelimit.NewBucketWithRate(rate, capacity)
 
 	// // 初始化全局上下文
 	ctx, cancel := context.WithCancel(context.Background())
