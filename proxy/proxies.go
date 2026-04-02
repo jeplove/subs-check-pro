@@ -392,7 +392,13 @@ func fetchRemoteSubUrls(listURL string) ([]string, error) {
 		}
 	}
 
-	// 3) 回退为按行解析 (纯文本) + 快速 URL 校验
+	// 3) 尝试从 Markdown 链接语法提取: [描述](https://...)
+	if urls := parse.ExtractMarkdownURLs(data); len(urls) > 0 {
+		slog.Debug("从 Markdown 链接提取订阅URL", "count", len(urls))
+		return urls, nil
+	}
+
+	// 4) 回退为按行解析 (纯文本) + 快速 URL 校验
 	res := make([]string, 0, 16)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {

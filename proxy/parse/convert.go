@@ -26,6 +26,20 @@ var (
 	v2rayLinkRegexCompiled *regexp.Regexp
 )
 
+var (
+	// mdLinkRegex 匹配 Markdown 链接语法: [描述](https://...)
+	mdLinkRegex = regexp.MustCompile(`\[([^\]]*)\]\((https?://[^\s)]+)\)`)
+
+	// `https://...` 内联代码块
+	mdInlineCodeURLRegex = regexp.MustCompile("`(https?://[^`\\s]+)`")
+
+	// ``` 或 ~~~ 围栏代码块内的内容
+	mdFenceBlockRegex = regexp.MustCompile("(?s)(?:```|~~~)[^\\n]*\\n(.+?)(?:```|~~~)")
+
+	// 通用 http/https URL（用于代码块内逐行扫描）
+	plainURLRegex = regexp.MustCompile(`https?://[^\s"'<>\)\]]+`)
+)
+
 // ParseSingBoxWithMetadata 解析带注释元数据的 Sing-Box 配置文件
 // 处理形如 #profile-title: ... 开头，主体为 JSON 的文件
 func ParseSingBoxWithMetadata(data []byte) []map[string]any {
@@ -966,4 +980,43 @@ func ExtractV2RayLinks(data []byte) []string {
 		}
 	}
 	return lo.Uniq(out)
+}
+
+// ExtractMarkdownURLs 从 Markdown 文本中提取订阅 URL，按优先级依次尝试：
+// 1. 标准链接语法 [描述](url)
+// 2. 内联代码块 `url`
+// 3. 围栏代码块 ``` url ```
+func ExtractMarkdownURLs(data []byte) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+
+	addURL := func(raw string) {
+		u := strings.TrimSpace(raw)
+		if _, ok := seen[u]; ok {
+			return
+		}
+		if parsed, err := url.Parse(u); err == nil && parsed.Host != "" {
+			seen[u] = struct{}{}
+			out = append(out, u)
+		}
+	}
+
+	// 1. 标准 Markdown 链接: [描述](https://...)
+	for _, m := range mdLinkRegex.FindAllSubmatch(data, -1) {
+		addURL(string(m[2]))
+	}
+
+	// 2. 内联代码块: `https://...`
+	for _, m := range mdInlineCodeURLRegex.FindAllSubmatch(data, -1) {
+		addURL(string(m[1]))
+	}
+
+	// 3. 围栏代码块内逐行扫描
+	for _, block := range mdFenceBlockRegex.FindAllSubmatch(data, -1) {
+		for _, u := range plainURLRegex.FindAll(block[1], -1) {
+			addURL(string(u))
+		}
+	}
+
+	return out
 }
