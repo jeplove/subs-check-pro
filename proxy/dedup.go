@@ -124,6 +124,17 @@ func GenerateProxyKey(p map[string]any) string {
 		if v, k := opts["grpc-service-name"].(string); k {
 			path = v
 		}
+	} else if opts, ok := p["xhttp-opts"].(map[string]any); ok {
+		// xhttp 的 path 参与去重
+		if v, k := opts["path"].(string); k {
+			path = v
+		}
+		// mode 不同（stream/packet/auto）代表不同的传输行为，必须区分
+		if mode, k := opts["mode"].(string); k && mode != "" {
+			sb.WriteString("xmode:")
+			sb.WriteString(mode)
+			sb.WriteByte('|')
+		}
 	}
 
 	if path != "" {
