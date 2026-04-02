@@ -79,7 +79,10 @@ func decompressEmbeddedMMDB(targetPath string) error {
 	}
 	defer file.Close()
 
-	zstdDecoder.Reset(bytes.NewReader(EmbeddedMaxMindDB))
+	if err := zstdDecoder.Reset(bytes.NewReader(EmbeddedMaxMindDB)); err != nil {
+		return err
+	}
+
 	if _, err := io.Copy(file, zstdDecoder); err != nil {
 		return fmt.Errorf("maxmind数据库文件解压失败: %w", err)
 	}

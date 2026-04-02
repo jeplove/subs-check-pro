@@ -96,8 +96,11 @@ func checkMemory(memoryLimit uint64) {
 		if cmd != nil {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
-			cmd.Start() // 让新进程启动
-			slog.Warn("因为内存问题启动了新进程，二进制用户如果需要关闭请关闭此窗口/终端")
+			if err := cmd.Start(); err != nil {
+				slog.Error("重启失败", "err", err)
+			} else {
+				slog.Warn("因为内存问题启动了新进程，二进制用户如果需要关闭请关闭此窗口/终端")
+			}
 		}
 
 		// 退出当前进程

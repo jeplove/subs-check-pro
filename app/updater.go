@@ -120,7 +120,10 @@ func detectSuccessNotify(currentVersion string, latest *selfupdate.Release) {
 // updateSuccess 更新成功处理
 func (app *App) updateSuccess(current string, latest string, silentUpdate bool) {
 	slog.Info("更新成功，清理进程后重启...")
-	app.Shutdown()
+	err := app.Shutdown()
+	if err != nil {
+		slog.Error("自动更新进程关闭应用失败", "err", err)
+	}
 
 	// 发送更新成功通知
 	utils.SendNotifySelfUpdate(current, latest)
