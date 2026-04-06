@@ -786,7 +786,7 @@ func (pc *ProxyChecker) runMediaStageAndCollect(db *maxminddb.Reader, ctx contex
 					}
 				}
 
-				if mediaON {
+				if mediaON && !checkCtxDone(ctx) {
 					mediaCheck(job, db, ctx)
 				}
 
