@@ -10,7 +10,7 @@ release:
   # 自动检测是否为预发布版本
   prerelease: auto
 
-# 变更日志配置 (新增部分)
+# 变更日志配置
 changelog:
   # 排序方式：asc (旧->新) 或 desc (新->旧)
   sort: asc

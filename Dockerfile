@@ -1,55 +1,36 @@
-# # Use phusion/baseimage as base image. To make your builds reproducible, make
-# # sure you lock down to a specific version, not to `latest`!
-# # See https://github.com/phusion/baseimage-docker/blob/master/Changelog.md for
-# # a list of version numbers.
-# FROM phusion/baseimage:<VERSION>
+# 提取 ca-certificates 和时区数据
+FROM debian:bookworm-slim AS base-files
 
-# # Use baseimage-docker's init system.
-# CMD ["/sbin/my_init"]
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tzdata && \
+    rm -rf /var/lib/apt/lists/*
 
-# # ...put your own build instructions here...
+# 最终镜像
+# distroless/cc-debian12:
+#   - 包含 glibc、libstdc++、libgcc（node 二进制运行必需）
+#   - 无 shell / 无包管理器
+FROM gcr.io/distroless/cc-debian12
 
-# # Clean up APT when done.
-# RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+ARG TARGETARCH
 
-FROM golang:alpine AS builder
 WORKDIR /app
-COPY . .
-ARG GITHUB_SHA
-ARG VERSION
-RUN apk add --no-cache nodejs zstd && \
-    ARCH=$(uname -m) && \
-    case "$ARCH" in \
-    "x86_64") zstd -f /usr/bin/node -o assets/node_linux_amd64.zst ;; \
-    "aarch64") zstd -f /usr/bin/node -o assets/node_linux_arm64.zst ;; \
-    "armv7l") zstd -f /usr/bin/node -o assets/node_linux_armv7.zst ;; \
-    *) echo "不支持的架构: $ARCH" && exit 1 ;; \
-    esac
 
-# 镜像描述标签
+# 复制证书和时区
+COPY --from=base-files /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=base-files /usr/share/zoneinfo/Asia/Shanghai   /usr/share/zoneinfo/Asia/Shanghai
+COPY --from=base-files /usr/share/zoneinfo/Asia/Shanghai   /etc/localtime
+
+ENV TZ=Asia/Shanghai
+ENV RUNNING_IN_DOCKER=true
+
 LABEL org.opencontainers.image.description="高性能[测活、测速、媒体检测]代理检测筛选工具，支持100-1000高并发低占用运行，大幅减少数倍检测时间。"
-LABEL org.opencontainers.image.keywords="subs-check-pro,测活,测速,媒体检测,sub-store,节点管理,流媒体检测,测速节点,自动化,GoReleaser,Docker,best-sub,proxy,proxies,mihomo,v2ay,clash"
-LABEL org.opencontainers.image.url="https://github.com/sinspired/subs-check-pro"
-LABEL org.opencontainers.image.documentation="https://github.com/sinspired/subs-check-pro/wiki"
 LABEL org.opencontainers.image.source="https://github.com/sinspired/subs-check-pro"
 
-RUN echo "Building commit: ${GITHUB_SHA:0:7}" && \
-    go mod tidy && \
-    go build -ldflags="-s -w -X main.Version=${VERSION} -X main.CurrentCommit=${GITHUB_SHA:0:7}" -trimpath -o subs-check-pro .
+# TARGETARCH 由 buildx 自动注入: amd64 / arm64 / arm
+COPY bin/subs-check-pro-linux-${TARGETARCH} /app/subs-check-pro
 
-FROM alpine
-WORKDIR /app
-ENV TZ=Asia/Shanghai
-# 👇 显式标记运行在 Docker 中
-ENV RUNNING_IN_DOCKER=true
-RUN apk add --no-cache alpine-conf ca-certificates nodejs &&\
-    /usr/sbin/setup-timezone -z Asia/Shanghai && \
-    apk del alpine-conf && \
-    rm -rf /var/cache/apk/* && \
-    rm -rf /usr/bin/node
-
-COPY --from=builder /app/subs-check-pro /app/subs-check-pro
-# shell form -> exec form
 CMD ["/app/subs-check-pro"]
 EXPOSE 8199
 EXPOSE 8299
