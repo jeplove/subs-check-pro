@@ -99,5 +99,3 @@ archives:
 upx:
   - enabled: true
     compress: "best"
-    lzma: true
-    brute: true
