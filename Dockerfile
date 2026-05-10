@@ -1,36 +1,27 @@
-# 提取 ca-certificates 和时区数据
-FROM debian:bookworm-slim AS base-files
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        tzdata && \
-    rm -rf /var/lib/apt/lists/*
+# 提取时区数据
+FROM alpine AS base-files
+RUN apk add --no-cache tzdata
 
 # 最终镜像
-# distroless/cc-debian12:
-#   - 包含 glibc、libstdc++、libgcc（node 二进制运行必需）
-#   - 无 shell / 无包管理器
-FROM gcr.io/distroless/cc-debian12
+FROM chainguard/glibc-dynamic
 
 ARG TARGETARCH
 
 WORKDIR /app
 
-# 复制证书和时区
-COPY --from=base-files /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=base-files /usr/share/zoneinfo/Asia/Shanghai   /usr/share/zoneinfo/Asia/Shanghai
-COPY --from=base-files /usr/share/zoneinfo/Asia/Shanghai   /etc/localtime
+# 复制时区
+COPY --from=base-files /usr/share/zoneinfo/Asia/Shanghai /usr/share/zoneinfo/Asia/Shanghai
+COPY --from=base-files /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 ENV TZ=Asia/Shanghai
 ENV RUNNING_IN_DOCKER=true
 
 # 镜像描述标签
-LABEL org.opencontainers.image.description="高性能[测活、测速、媒体检测]代理检测筛选工具，支持100-1000高并发低占用运行，大幅减少数倍检测时间。"
-LABEL org.opencontainers.image.keywords="subs-check-pro,测活,测速,媒体检测,sub-store,节点管理,流媒体检测,测速节点,自动化"
-LABEL org.opencontainers.image.url="https://github.com/sinspired/subs-check-pro/doc/images/Subs-Check-PRO_OG.png"
-LABEL org.opencontainers.image.documentation="https://github.com/sinspired/subs-check-pro/wiki"
-LABEL org.opencontainers.image.source="https://github.com/sinspired/subs-check-pro"
+LABEL org.opencontainers.image.title="subs-check-pro" \
+      org.opencontainers.image.description="高性能代理检测筛选工具，支持高并发测活、测速、媒体检测" \
+      org.opencontainers.image.url="https://github.com/sinspired/subs-check-pro" \
+      org.opencontainers.image.source="https://github.com/sinspired/subs-check-pro" \
+      org.opencontainers.image.documentation="https://github.com/sinspired/subs-check-pro/wiki"
 
 # TARGETARCH 由 buildx 自动注入: amd64 / arm64 / arm
 COPY bin/subs-check-pro-linux-${TARGETARCH} /app/subs-check-pro
