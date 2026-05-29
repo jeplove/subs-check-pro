@@ -87,7 +87,7 @@ jobs:
       - name: Send notifications
         uses: sinspired/multi-release-notify@v1
         with:
-          summary: "由于原仓库触发审查，本版本合并精简了历史提交，删除部分敏感内容。"
+          summary: "由于原仓库触发审查，本版本合并精简了历史提交，删除部分敏感内容。请大家及时点🌟，fork，分享，备份，避免再次失联！ps: [跨平台现代 GUI 桌面端已发布](https://github.com/sinspired/subs-check-pro-gui)"
           # release_notes: ${{ steps.release.outputs.notes }}
           release_notes: |
             ## 🚀 发布说明
