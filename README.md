@@ -268,7 +268,7 @@ cd subs-check-pro
 
 ## 🙏 鸣谢
 
-[beck-8](https://github.com/beck-8)、[cmliu](https://github.com/cmliu)、[Sub-Store](https://github.com/sub-store-org/Sub-Store)、[bestruirui](https://github.com/bestruirui/BestSub)
+[beck-8](https://github.com/beck-8)、[Sub-Store](https://github.com/sub-store-org/Sub-Store)、[bestruirui](https://github.com/bestruirui/BestSub)
 
 ## ⭐ Star History
 
