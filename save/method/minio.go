@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"mime"
+	"path/filepath"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -71,7 +73,16 @@ func UploadToS3(data []byte, filename string) error {
 	// Upload the data.
 	reader := bytes.NewReader(data)
 	objectName := filename
-	contentType := "application/octet-stream"
+
+	ext := filepath.Ext(filename)
+	contentType := mime.TypeByExtension(ext)
+
+	if contentType == "" {
+		contentType = "application/octet-stream"
+		if ext == ".yaml" || ext == ".yml" {
+			contentType = "text/plain; charset=utf-8"
+		}
+	}
 
 	info, err := minioClient.PutObject(ctx, bucketName, objectName, reader, int64(len(data)), minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
