@@ -93,7 +93,10 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 		return raw
 	}
 
-	q.Set("format", "markdown")
+	// 钉钉不支持 format 参数，需特殊处理
+	if scheme != "dingding" && scheme != "dingtalk" {
+		q.Set("format", "markdown")
+	}
 
 	switch scheme {
 	case "bark", "barks":
