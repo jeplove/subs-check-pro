@@ -361,6 +361,7 @@ func (app *App) triggerCheck() {
 	defer app.checking.Store(false)
 
 	if err := app.checkProxies(); err != nil {
+		check.CurrentStepName.Store("检测失败")
 		slog.Error("检测代理失败", "error", err)
 	}
 
@@ -379,6 +380,7 @@ func (app *App) triggerCheck() {
 		}
 	}
 	debug.FreeOSMemory()
+	check.CurrentStepName.Store("检测完成")
 }
 
 // checkProxies 执行代理检测
@@ -393,16 +395,28 @@ func (app *App) checkProxies() error {
 
 	loadHistoricalCheckRate() // 注入历史速率后再开始检测
 
+	check.StartProgress()
+	defer check.StopProgress()
+
 	results, err := check.Check()
 	if err != nil {
 		return fmt.Errorf("检测代理失败: %w", err)
 	}
 
 	slog.Info("检测完成")
+
+	check.CurrentStepName.Store("保存配置")
 	save.SaveConfig(results)
+
+	check.CurrentStepName.Store("发送通知")
 	utils.SendNotifyCheckResult(len(results), check.CheckTrafficTotal)
+
+	check.CurrentStepName.Store("更新订阅")
 	utils.UpdateSubs()
 
+	if config.GlobalConfig.CallbackScript != "" {
+		check.CurrentStepName.Store("执行回调脚本")
+	}
 	// 执行回调脚本
 	utils.ExecuteCallback(len(results))
 
@@ -414,6 +428,7 @@ func (app *App) checkProxies() error {
 	app.lastCheck.Total.Store(int64(check.ProxyCount.Load()))
 	app.lastCheck.available.Store(int64(len(results)))
 
+	check.CurrentStepName.Store("内存释放")
 	// 切断所有大对象的应用
 	results = nil //nolint:ineffassign
 	proxyutils.ClearCache()

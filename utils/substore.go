@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -118,6 +119,9 @@ function operator(proxies = []) {
 	// defaultSubInfoURL 首次注入时使用的默认脚本地址
 	defaultSubInfoURL = "https://raw.githubusercontent.com/sinspired/sub-store-scripts/refs/heads/main/surge/modules/sub-store-scripts/sub-info/node.js#showLastUpdate=true"
 )
+
+// 全局锁防止 save 包并发推送和前端修改并发写冲突
+var subStoreMu sync.Mutex
 
 // 全局运行时变量
 var (
@@ -640,7 +644,7 @@ func newSingboxFile(name, jsURL, jsonURL string) file {
 	}
 
 	// icon := "https://singbox.app/wp-content/uploads/2025/06/cropped-logo-278x300.webp"
-	icon := WarpURL("https://raw.githubusercontent.com/lige47/QuanX-icon-rule/main/icon/02ProxySoftLogo/singbox.png", IsGithubProxy)
+	icon := WarpURL("https://raw.githubusercontent.com/sinspired/subs-check-pro-webui/main/webui/static/icon/singbox.svg", IsGithubProxy)
 	return file{
 		Name:        name,
 		Remark:      remark,
@@ -775,7 +779,7 @@ func updateSub(s sub) error {
 
 	patch := struct {
 		Icon        string `json:"icon,omitempty"`
-		Content     string `json:"content"`
+		Content     string `json:"content,omitempty"`
 		SubUserInfo string `json:"subUserinfo,omitempty"`
 		Process     []any  `json:"process"`
 	}{
@@ -837,8 +841,20 @@ func (f file) updateSubStoreFile() error {
 // 入口
 
 // UpdateSubStore 更新 sub-store 全部订阅
+// 执行检测完毕后如果有新节点，无脑进行四个维度的全量推送
 func UpdateSubStore(yamlData []byte) {
-	IsGithubProxy = GetGhProxy()
+	UpdateSubStorePartial(yamlData, true, true, true, true)
+}
+
+// UpdateSubStorePartial 按需精准更新指定的配置 (供 API 调用)
+func UpdateSubStorePartial(yamlData []byte, doSub, doMihomo, doSbLatest, doSbOld bool) {
+	subStoreMu.Lock()
+	defer subStoreMu.Unlock()
+
+	// 只有涉及到这三者才做耗时的 GetGhProxy 探活
+	if doMihomo || doSbLatest || doSbOld {
+		IsGithubProxy = GetGhProxy()
+	}
 
 	// 调试时等待 node 启动
 	if os.Getenv("SUB_CHECK_SKIP") != "" && config.GlobalConfig.SubStorePort != "" {
@@ -850,11 +866,9 @@ func UpdateSubStore(yamlData []byte) {
 	if listenPort == "" {
 		listenPort = "8199"
 	}
-	// 去掉可能存在的前导冒号，统一拼接
 	listenPort = strings.TrimPrefix(listenPort, ":")
 	SubUserInfoURL = fmt.Sprintf("http://127.0.0.1:%s%s#noCache", listenPort, SubInfoPath)
 
-	// 规范化 SubStorePort，设置 BaseURL
 	config.GlobalConfig.SubStorePort = formatPort(config.GlobalConfig.SubStorePort)
 	BaseURL = fmt.Sprintf("http://127.0.0.1%s", config.GlobalConfig.SubStorePort)
 	if p := config.GlobalConfig.SubStorePath; p != "" {
@@ -864,34 +878,48 @@ func UpdateSubStore(yamlData []byte) {
 		BaseURL += config.GlobalConfig.SubStorePath
 	}
 
-	// --- sub ---
-	defaultSub := newDefaultSub(yamlData)
-	if err := updateSub(defaultSub); err != nil {
-		slog.Error("更新订阅失败",
-			"name", defaultSub.Name,
-			"error", err,
-		)
-		return
+	// --- 1. sub ---
+	if doSub {
+		defaultSub := newDefaultSub(yamlData)
+		if err := updateSub(defaultSub); err != nil {
+			slog.Error("更新订阅失败", "name", defaultSub.Name, "error", err)
+			return
+		}
+		slog.Info("sub-store 订阅已更新", "name", defaultSub.Name)
 	}
 
-	slog.Info("sub-store 订阅已更新", "name", defaultSub.Name)
-
-	// --- mihomo ---
-	if err := newMihomoFile().updateSubStoreFile(); err != nil {
-		slog.Warn("mihomo 订阅更新失败", "error", err)
+	// --- 2. mihomo ---
+	if doMihomo {
+		if err := newMihomoFile().updateSubStoreFile(); err != nil {
+			slog.Warn("mihomo 订阅更新失败", "error", err)
+		}
 	}
 
-	// --- singbox ---
-	// 除了程序初始化时从配置获取 Singbox 版本号,只有在sub-store更新时变动才有意义
-	InitSingboxVersion()
+	// --- 3. singbox ---
+	if doSbLatest || doSbOld {
+		InitSingboxVersion()
+	}
 
-	processSingboxFile(&config.GlobalConfig.SingboxLatest, latestSingboxJS, latestSingboxJSON, LatestSingboxVersion)
-	processSingboxFile(&config.GlobalConfig.SingboxOld, OldSingboxJS, OldSingboxJSON, OldSingboxVersion)
+	if doSbLatest {
+		if err := processSingboxFile(&config.GlobalConfig.SingboxLatest, latestSingboxJS, latestSingboxJSON, LatestSingboxVersion); err != nil {
+			name := SingboxName + "-" + latestSingboxJSON
+			slog.Warn(name+"订阅更新失败", "error", err)
+		}
+	}
 
-	slog.Info("sub-store 更新完成")
+	if doSbOld {
+		if err := processSingboxFile(&config.GlobalConfig.SingboxOld, OldSingboxJS, OldSingboxJSON, OldSingboxVersion); err != nil {
+			name := SingboxName + "-" + OldSingboxVersion
+			slog.Warn(name+"订阅更新失败", "error", err)
+		}
+	}
+
+	if doSub || doMihomo || doSbLatest || doSbOld {
+		slog.Info("sub-store 更新完成")
+	}
 }
 
-func processSingboxFile(sbc *config.SingBoxConfig, defaultJS, defaultJSON, version string) {
+func processSingboxFile(sbc *config.SingBoxConfig, defaultJS, defaultJSON, version string) error {
 	js, jsonStr := defaultJS, defaultJSON
 	if len(sbc.JS) > 0 && len(sbc.JSON) > 0 {
 		js = sbc.JS
@@ -900,7 +928,9 @@ func processSingboxFile(sbc *config.SingBoxConfig, defaultJS, defaultJSON, versi
 	f := newSingboxFile(SingboxName+"-"+version, js, jsonStr)
 	if err := f.updateSubStoreFile(); err != nil {
 		slog.Warn("sub-store 订阅更新失败", "name", f.Name, "error", err)
+		return err
 	}
+	return nil
 }
 
 // 工具函数

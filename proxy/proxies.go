@@ -135,15 +135,19 @@ func initMemory() {
 }
 
 // GetProxies 主入口：获取、解析、去重及统计代理节点
-func GetProxies() ([]map[string]any, int, int, int, error) {
+func GetProxies(progressCallback func(stepName string, done, total, available int)) ([]map[string]any, int, int, int, error) {
 	// 每次进入先清空上次的连接池
 	ClearCache()
+
+	if progressCallback != nil {
+		progressCallback("初始化代理状态", 0, 0, 0)
+	}
 
 	// 初始化代理环境变量
 	initEnvironment()
 
 	// 获取远程订阅列表
-	subUrls, localNum, remoteNum, historyNum := resolveSubUrls()
+	subUrls, localNum, remoteNum, historyNum := resolveSubUrls(progressCallback)
 	logSubscriptionStats(len(subUrls), localNum, remoteNum, historyNum)
 
 	// 定义优先级常量
@@ -258,6 +262,12 @@ func GetProxies() ([]map[string]any, int, int, int, error) {
 	listenPort := strings.TrimPrefix(config.GlobalConfig.ListenPort, ":")
 	subStorePort := strings.TrimPrefix(config.GlobalConfig.SubStorePort, ":")
 
+	var fetchedCount atomic.Int32
+	var validSubsCount atomic.Int32
+	if progressCallback != nil {
+		progressCallback("获取订阅", 0, len(subUrls), 0)
+	}
+
 	for _, subURL := range subUrls {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -265,7 +275,13 @@ func GetProxies() ([]map[string]any, int, int, int, error) {
 		go func(u, t string, succ, hist bool) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			processSubscription(u, t, succ, hist, proxyChan, batchSize)
+			hasValid := processSubscription(u, t, succ, hist, proxyChan, batchSize)
+			if hasValid {
+				validSubsCount.Add(1)
+			}
+			if progressCallback != nil {
+				progressCallback("获取订阅", int(fetchedCount.Add(1)), len(subUrls), int(validSubsCount.Load()))
+			}
 		}(subURL, tag, isSucced, isHistory)
 	}
 
@@ -316,7 +332,7 @@ func GetProxies() ([]map[string]any, int, int, int, error) {
 }
 
 // resolveSubUrls 合并本地与远程订阅清单并去重
-func resolveSubUrls() ([]string, int, int, int) {
+func resolveSubUrls(progressCallback func(stepName string, done, total, available int)) ([]string, int, int, int) {
 	// 初始化内存限制
 	initMemory()
 
@@ -327,7 +343,12 @@ func resolveSubUrls() ([]string, int, int, int) {
 	urls = append(urls, config.GlobalConfig.SubUrls...)
 
 	if len(config.GlobalConfig.SubUrlsRemote) != 0 {
-		slog.Info("获取远程订阅列表")
+		slog.Info("拉取远程订阅列表")
+		if progressCallback != nil {
+			progressCallback("拉取远程订阅列表", 0, len(config.GlobalConfig.SubUrlsRemote), 0)
+		}
+		var fetched int
+		var valid int
 		for _, subURLRemote := range config.GlobalConfig.SubUrlsRemote {
 			// 处理为标准的raw地址
 			subURLRemote = parse.NormalizeGitHubRawURL(subURLRemote)
@@ -337,12 +358,17 @@ func resolveSubUrls() ([]string, int, int, int) {
 					logFatal(err, subURLRemote)
 				}
 			} else {
+				valid++
 				remoteNum += len(remote)
 				urls = append(urls, remote...)
 			}
+			fetched++
+			if progressCallback != nil {
+				progressCallback("拉取远程订阅列表", fetched, len(config.GlobalConfig.SubUrlsRemote), valid)
+			}
 		}
 	} else {
-		slog.Info("获取订阅列表")
+		slog.Info("拉取订阅列表")
 	}
 
 	requiredListenPort := strings.TrimSpace(strings.TrimPrefix(config.GlobalConfig.ListenPort, ":"))
@@ -482,13 +508,13 @@ func processSubscription(
 	wasSucced, wasHistory bool,
 	out chan<- []map[string]any,
 	batchSize int, // 由 GetProxies 传入，统一管理
-) {
+) bool {
 	data, err := FetchSubsData(urlStr)
 	if err != nil {
 		if !errors.Is(err, ErrIgnore) {
 			logFatal(err, urlStr)
 		}
-		return
+		return false
 	}
 
 	filterTypes := config.GlobalConfig.NodeType
@@ -497,6 +523,7 @@ func processSubscription(
 		rawHits      int // 层 1：解析阶段产出的候选节点数（可能含同订阅内跨解析器重复，见 parse/stream.go）
 		validCount   int // 层 2：通过类型/端口校验、实际发往全局去重队列的节点数（去重前）
 		typeFiltered int
+		hasValid     bool
 	)
 
 	batch := make([]map[string]any, 0, batchSize)
@@ -537,6 +564,8 @@ func processSubscription(
 			slog.Debug("过滤掉无效的畸形节点", "订阅", urlStr, "数据", node)
 			return true
 		}
+
+		hasValid = true
 
 		// 订阅内去重（减少对全局 map 和 channel 的压力）
 		key := utils.NodeKey(node)
@@ -584,6 +613,8 @@ func processSubscription(
 		"类型过滤", typeFiltered,
 		"入队", validCount,
 	)
+
+	return hasValid
 }
 
 // identifyLocalSubType 识别本地订阅源类型

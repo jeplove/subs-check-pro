@@ -37,7 +37,6 @@ func ResetETA() {
 	rateHistMu.Lock()
 	rateHist = rateHist[:0]
 	rateHistMu.Unlock()
-	ETASeconds.Store(-1)
 }
 
 // SnapshotRate 每 500ms 由后台 goroutine 调用，记录进度快照

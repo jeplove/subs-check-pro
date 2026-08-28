@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +61,8 @@ var publicStaticFileList = []struct {
 var (
 	initAPIKey string
 	geneAPIKey string
+	// 标记 SubStore 是否正在后台更新
+	subStoreSyncing atomic.Bool
 )
 
 // initHTTPServer 初始化并启动HTTP服务器
@@ -366,16 +370,67 @@ func (app *App) updateConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求格式"})
 		return
 	}
-	var yamlData map[string]any
-	if err := yaml.Unmarshal([]byte(req.Content), &yamlData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "YAML格式错误: " + err.Error()})
+
+	// 1. 解析并对比
+	var newConfig config.Config
+	if err := yaml.Unmarshal([]byte(req.Content), &newConfig); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "YAML格式或解析错误: " + err.Error()})
 		return
 	}
+
+	// 使用 reflect.DeepEqual 替代高开销和产生内存分配的 yaml.Marshal 对比方式
+	doSub := !reflect.DeepEqual(newConfig.SubProcess, config.GlobalConfig.SubProcess)
+	doMihomo := newConfig.MihomoOverwriteURL != config.GlobalConfig.MihomoOverwriteURL
+	doLatest := !reflect.DeepEqual(newConfig.SingboxLatest, config.GlobalConfig.SingboxLatest)
+	doOld := !reflect.DeepEqual(newConfig.SingboxOld, config.GlobalConfig.SingboxOld)
+
 	if err := os.WriteFile(app.configPath, []byte(req.Content), 0o644); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存配置文件失败" + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "配置已更新"})
+
+	hasSubStoreUpdate := doSub || doMihomo || doLatest || doOld
+	needGetGhProxy := doMihomo || doLatest || doOld
+
+	// 在保存接口内直接启动异步无阻塞 goroutine，彻底剔除前端发起的更新 api 和轮询开销
+	if hasSubStoreUpdate {
+		subStoreSyncing.Store(true) // 开启后台更新标记
+		go func() {
+			// 无论执行成功或失败，结束时重置后台更新标记
+			defer subStoreSyncing.Store(false)
+
+			if config.GlobalConfig.SubStorePort != "" && assets.IsSubStoreRunning.Load() {
+				// 等待500ms确保后端的 filewatcher（如 fsnotify）已将最新文件重载进 config.GlobalConfig 中
+				time.Sleep(500 * time.Millisecond)
+
+				// 收集所有触发了更新的项目名称
+				var targets []string
+				if doSub {
+					targets = append(targets, utils.SubName)
+				}
+				if doMihomo {
+					targets = append(targets, utils.MihomoName)
+				}
+				if doLatest {
+					targets = append(targets, utils.SingboxName+newConfig.SingboxLatest.Version)
+				}
+				if doOld {
+					targets = append(targets, utils.SingboxName+newConfig.SingboxOld.Version)
+				}
+
+				// 打印日志，格式如: msg="已触发 sub-store 后台更新" name="sub丨mihomo"
+				slog.Info("已触发 sub-store 后台更新", "name", strings.Join(targets, "丨"))
+				utils.UpdateSubStorePartial(nil, doSub, doMihomo, doLatest, doOld)
+			}
+		}()
+	}
+
+	// 响应结果给前端让它出 UI 提示
+	c.JSON(http.StatusOK, gin.H{
+		"message":               "配置已保存",
+		"substore_syncing":      hasSubStoreUpdate,
+		"substore_need_ghproxy": needGetGhProxy,
+	})
 }
 
 // getStatus 获取检测状态
@@ -397,6 +452,7 @@ func (app *App) getStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"checking":          app.checking.Load(),
+		"fetching":          check.Fetching.Load(),
 		"stepName":          check.CurrentStepName.Load(),
 		"proxyCount":        check.ProxyCount.Load(),
 		"processed":         check.Processed.Load(),
@@ -407,7 +463,13 @@ func (app *App) getStatus(c *gin.Context) {
 		"processResults":    check.ProcessResults.Load(),
 		"lastCheck":         lastCheck,
 		"isSubStoreRunning": assets.IsSubStoreRunning.Load(),
+		"subStoreSyncing":   subStoreSyncing.Load(),  // 将后台更新状态暴露给前端
 		"eta":               check.ETASeconds.Load(), // -1=计算中, 0=完成, >0=剩余秒
+
+		"subStorePort":  config.GlobalConfig.SubStorePort,
+		"subStorePath":  config.GlobalConfig.SubStorePath,
+		"singboxOld":    utils.OldSingboxVersion,
+		"singboxLatest": utils.LatestSingboxVersion,
 	})
 }
 

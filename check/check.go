@@ -50,6 +50,9 @@ var (
 	CheckEndTime      time.Time
 	CheckDuration     time.Duration
 	CheckTrafficTotal string
+
+	Fetching atomic.Bool // 拉取订阅阶段
+	Checking atomic.Bool // 检测阶段
 )
 
 // 存储测速和流媒体检测开关状态
@@ -237,8 +240,16 @@ func Check() ([]Result, error) {
 	speedON = config.GlobalConfig.SpeedTestURL != ""
 	mediaON = config.GlobalConfig.MediaCheck
 
+	// 标记订阅获取阶段开始
+	Fetching.Store(true)
+	CurrentStepName.Store("获取订阅")
 	// 获取订阅节点和之前成功的节点数量(已前置)
-	proxies, rawCount, subWasSuccedLength, historyLength, err := proxyutils.GetProxies()
+	proxies, rawCount, subWasSuccedLength, historyLength, err := proxyutils.GetProxies(func(stepName string, done, total, available int) {
+		CurrentStepName.Store(stepName)
+		Progress.Store(uint32(done))
+		ProxyCount.Store(uint32(total))
+		Available.Store(uint32(available))
+	})
 	if err != nil {
 		return nil, fmt.Errorf("获取节点失败: %w", err)
 	}
@@ -249,6 +260,10 @@ func Check() ([]Result, error) {
 
 	debug.FreeOSMemory()
 
+	Available.Store(0)
+	Progress.Store(0)
+	ProxyCount.Store(0)
+
 	if subWasSuccedLength > 0 {
 		slog.Info("已加载上次检测可用节点", "数量", subWasSuccedLength)
 	}
@@ -257,6 +272,7 @@ func Check() ([]Result, error) {
 		slog.Info("已加载历次检测可用节点", "数量", historyLength)
 	}
 
+	CurrentStepName.Store("节点乱序")
 	// 设置之前成功的节点顺序在前
 	headSize := subWasSuccedLength
 	if len(proxies) > headSize {
@@ -278,10 +294,15 @@ func Check() ([]Result, error) {
 		slog.Info(fmt.Sprintf("节点乱序, 相同 CIDR%s 最小间距: %d", cidr, cfg.MinSpacing))
 	}
 
+	CurrentStepName.Store("获取订阅完成")
 	if len(proxies) == 0 {
 		slog.Info("没有需要检测的节点")
 		return nil, nil
 	}
+
+	// 标记订阅获取阶段结束
+	Fetching.Store(false)
+	Checking.Store(true)
 
 	checker := NewProxyChecker(len(proxies))
 
@@ -292,6 +313,7 @@ func Check() ([]Result, error) {
 
 // Run 运行检测流程
 func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
+	CurrentStepName.Store("初始化检测")
 	// 限速设置
 	limit := config.GlobalConfig.TotalSpeedLimit
 	if limit <= 0 {
@@ -418,16 +440,16 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 		}
 	}()
 
-	// 进度显示 —— 使用关闭信号并等待 showProgress 完成
-	doneCh := make(chan struct{})
-	finishedCh := make(chan struct{})
+	// // 进度显示 —— 使用关闭信号并等待 showProgress 完成
+	// doneCh := make(chan struct{})
+	// finishedCh := make(chan struct{})
 
-	if config.GlobalConfig.PrintProgress {
-		go func() {
-			pc.showProgress(doneCh)
-			close(finishedCh)
-		}()
-	}
+	// if config.GlobalConfig.PrintProgress {
+	// 	go func() {
+	// 		pc.showProgress(doneCh)
+	// 		close(finishedCh)
+	// 	}()
+	// }
 
 	// 计算预计剩余时间
 	go func() {
@@ -448,21 +470,17 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	// 启动流水线任务前设置 mihomo 变量
 	resolver.DisableIPv6 = !config.GlobalConfig.EnableIPv6
 
+	CurrentStepName.Store("进度")
+
 	// 启动流水线阶段
 	go pc.distributeJobs(proxies, ctx)
 	go pc.runAliveStage(ctx, geoDB)
 	go pc.runSpeedStage(ctx, cancel)
 	pc.runMediaStageAndCollect(geoDB, ctx, cancel)
+	CurrentStepName.Store("处理结果")
 
-	// 确保进度显示到 100% 再打印收尾日志
-	if config.GlobalConfig.PrintProgress {
-		// 收集工作已全部完成，调用 Finalize 强制将进度设置为 100%
-		pc.pt.Finalize()
-
-		// 关闭 done 通知 showProgress 打印最终状态并退出，然后等待其完全结束
-		close(doneCh)
-		<-finishedCh
-	}
+	// 确保进度显示到 100%
+	pc.pt.Finalize()
 
 	if config.GlobalConfig.SuccessLimit > 0 && pc.available.Load() >= config.GlobalConfig.SuccessLimit {
 		slog.Info(fmt.Sprintf("达到成功节点数量限制 %d, 收集结果完成。", config.GlobalConfig.SuccessLimit))
@@ -483,6 +501,9 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	CheckEndTime = time.Now()
 	CheckDuration = time.Since(CheckStartTime)
 
+	CurrentStepName.Store("生成检测报告")
+	time.Sleep(10 * time.Second)
+
 	// 1. 深度分析 (利用上一步的成功率进行排序，生成 analysis yaml)
 	pc.GenerateAnalysisReport()
 
@@ -496,8 +517,13 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 
 	Bucket = nil //nolint:ineffassign
 
+	CurrentStepName.Store("释放检测内存")
+
 	// 在保存上传之前直接归还内存
 	debug.FreeOSMemory()
+
+	// 标记结束
+	Checking.Store(false)
 
 	return pc.results, nil
 }
@@ -823,12 +849,12 @@ func (pc *ProxyChecker) runMediaStageAndCollect(db *maxminddb.Reader, ctx contex
 
 	// 等待所有 worker 完成，再关闭 pc.resultChan，让 collector 退出
 	wg.Wait()
-	ProcessResults.Store(true)
 	close(pc.resultChan)
 	collectorWg.Wait()
 
 	// 最后一次刷新并返回收集结果
 	pc.pt.refresh()
+	ProcessResults.Store(true)
 }
 
 // collectResults 收集检测结果

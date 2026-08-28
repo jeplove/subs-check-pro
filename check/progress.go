@@ -57,6 +57,7 @@ func NewProgressTracker(total int) *ProgressTracker {
 
 	ProxyCount.Store(uint32(total))
 	Progress.Store(0)
+	Available.Store(0)
 
 	// 初始化进度权重
 	progressWeight = getCheckWeight(speedON, mediaON)
@@ -188,7 +189,7 @@ func (pt *ProgressTracker) refresh() {
 
 // refreshDynamic 根据各阶段完成率的加权和来计算进度，支持中途停止信号
 func (pt *ProgressTracker) refreshDynamic() {
-	stopped := Successlimited.Load() || ForceClose.Load() || ProcessResults.Load()
+	stopped := Successlimited.Load() || ForceClose.Load() || ProcessResults.Load() || pt.finalized.Load()
 
 	// 1. 确定计算基数（分母）
 	// 如果触发了限制（成功数达到 or 强制关闭），分母不再是总订阅数，而是“实际已测活数”
@@ -351,8 +352,6 @@ func (pt *ProgressTracker) refreshStage() {
 
 	// 处理停止信号下的显示文字
 	if ProcessResults.Load() {
-		CurrentStepName.Store("保存中")
-
 		total := uint32(pt.aliveDone.Load())
 		if total == 0 {
 			ProxyCount.Store(0)
@@ -367,28 +366,53 @@ func (pt *ProgressTracker) refreshStage() {
 	}
 }
 
-// showProgress 负责在控制台中渲染进度条。
-func (pc *ProxyChecker) showProgress(done <-chan struct{}) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+var progressDone chan struct{}
+var progressFinished chan struct{}
 
-	for {
-		select {
-		case <-done:
-			fmt.Print(pc.renderProgressString())
-			fmt.Println()
-			return
-		case <-ticker.C:
-			fmt.Print(pc.renderProgressString())
+// StartProgress 启动进度显示，暴露给外部以便统一管理进度条生命周期
+func StartProgress() {
+	if !config.GlobalConfig.PrintProgress {
+		return
+	}
+	progressDone = make(chan struct{})
+	progressFinished = make(chan struct{})
+
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-progressDone:
+				fmt.Print(renderProgressString())
+				fmt.Println()
+				close(progressFinished)
+				return
+			case <-ticker.C:
+				fmt.Print(renderProgressString())
+			}
 		}
+	}()
+}
+
+// StopProgress 停止进度显示
+func StopProgress() {
+	if !config.GlobalConfig.PrintProgress {
+		return
+	}
+	if progressDone != nil {
+		close(progressDone)
+		<-progressFinished
+		progressDone = nil
+		progressFinished = nil
 	}
 }
 
 // renderProgressString 计算并格式化进度条字符串。
-func (pc *ProxyChecker) renderProgressString() string {
+func renderProgressString() string {
 	currentChecked := int(Progress.Load())
 	total := int(ProxyCount.Load())
-	available := pc.available.Load()
+	available := Available.Load()
 	etaSec := ETASeconds.Load()
 	step := ""
 
@@ -399,7 +423,7 @@ func (pc *ProxyChecker) renderProgressString() string {
 
 	var percent float64
 	if total == 0 {
-		if ProcessResults.Load() {
+		if ProcessResults.Load() || step == "保存配置" || step == "发送通知" {
 			percent = 100
 		}
 	} else {
