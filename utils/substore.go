@@ -4,7 +4,6 @@ package utils
 import (
 	"bytes"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,7 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/sinspired/subs-check-pro/v2/config"
+	"github.com/sinspired/subs-check-pro/v2/utils/script"
 )
 
 // Args 脚本操作参数
@@ -83,41 +84,16 @@ const (
 	// 差量合并时：有此前缀 → 按类型决策；无此前缀 → 用户操作，原样保留。
 	scpIDPrefix = "SCP."
 
-	latestSingboxJSON = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.json"
-	latestSingboxJS   = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.js"
-	OldSingboxJSON    = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.json"
-	OldSingboxJS      = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.js"
+	latestSingboxJSON = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.json"
+	latestSingboxJS   = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.js"
 
-	// nodeSplitScript 将 DNS 解析得到的多 IP 展开为独立节点
-	nodeSplitScript = `// 节点裂变脚本
-function operator(proxies = []) {
-  return proxies.flatMap((p = {}) => {
-    const ips = p._resolved_ips
-    if (!Array.isArray(ips) || ips.length === 0) return [p]
+	// Deprecated: sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除
+	OldSingboxJSON = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.json"
+	// Deprecated: sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除
+	OldSingboxJS = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.js"
 
-    const expanded = ips.map((server, i) => ({
-      ...p,
-      name: ` + "`${p.name}|+${i + 1}`" + `,
-      server,
-    }))
-
-    if (p._domain) {
-      expanded.push({
-        ...p,
-        name: ` + "`${p.name}|已裂变`" + `,
-        server: p._domain,
-      })
-    }
-
-    return expanded
-  })
-}`
-
-	// subInfoURLKeyword 用于在 SCP 操作中识别订阅流量信息脚本
+	// subInfoURLKeyword 用于在 SCP 操作中识别旧版 link 模式下的订阅流量信息脚本
 	subInfoURLKeyword = "sub-store-scripts"
-
-	// defaultSubInfoURL 首次注入时使用的默认脚本地址
-	defaultSubInfoURL = "https://raw.githubusercontent.com/sinspired/sub-store-scripts/refs/heads/main/surge/modules/sub-store-scripts/sub-info/node.js#showLastUpdate=true"
 )
 
 // 全局锁防止 save 包并发推送和前端修改并发写冲突
@@ -141,11 +117,13 @@ func InitSingboxVersion() {
 	if config.GlobalConfig.SingboxLatest.Version != "" && config.GlobalConfig.SingboxLatest.JSON != "" && config.GlobalConfig.SingboxLatest.JS != "" {
 		LatestSingboxVersion = config.GlobalConfig.SingboxLatest.Version
 	} else {
-		LatestSingboxVersion = "1.12"
+		LatestSingboxVersion = "1.14"
 	}
 	if config.GlobalConfig.SingboxOld.Version != "" && config.GlobalConfig.SingboxOld.JSON != "" && config.GlobalConfig.SingboxOld.JS != "" {
-		OldSingboxVersion = config.GlobalConfig.SingboxOld.Version
+		// Deprecated: sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除
+		OldSingboxVersion = config.GlobalConfig.SingboxOld.Version //nolint:staticcheck // SingboxOld is intentionally retained for iOS compatibility.
 	} else {
+		// Deprecated: sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除
 		OldSingboxVersion = "1.11"
 	}
 }
@@ -199,16 +177,28 @@ func isQuickSettingOperator(raw json.RawMessage) bool {
 // 前提：已确认是 SCP 操作，此处再通过 type + content 二次确认。
 func isSubInfoScpOperator(raw json.RawMessage) bool {
 	var op struct {
-		Type string `json:"type"`
-		Args struct {
+		Type       string `json:"type"`
+		CustomName string `json:"customName"`
+		Args       struct {
 			Content string `json:"content"`
+			Mode    string `json:"mode"`
 		} `json:"args"`
 	}
 	if err := json.Unmarshal(raw, &op); err != nil {
 		return false
 	}
-	return op.Type == "Script Operator" &&
-		strings.Contains(op.Args.Content, subInfoURLKeyword)
+	if op.Type != "Script Operator" {
+		return false
+	}
+	// 兼容旧版 link 模式
+	if op.Args.Mode == "link" && strings.Contains(op.Args.Content, subInfoURLKeyword) {
+		return true
+	}
+	// 新版 script 模式：通过 CustomName 快速匹配（因为外层已确认是 scpIDPrefix）
+	if op.Args.Mode == "script" && op.CustomName == "注入订阅流量信息节点" {
+		return true
+	}
+	return false
 }
 
 // patchDisabled 仅修改操作的 disabled 字段，其余字段原样保留
@@ -276,8 +266,9 @@ func buildScpOps(cfg config.SubProcessConfig) []any {
 			CustomName: "节点裂变",
 			ID:         newOperatorID(),
 			Args: Args{
-				"content": nodeSplitScript,
-				"mode":    "script",
+				"content":        string(script.EmbeddedNodeSplitScript),
+				"mode":           "script",
+				"editorLanguage": "javascript",
 			},
 		})
 	}
@@ -406,8 +397,9 @@ func mergeSubProcess(existing []json.RawMessage, scpOps []any, cfg config.SubPro
 			CustomName: "注入订阅流量信息节点",
 			ID:         newOperatorID(), // 带 SCP ID，下次由 isSubInfoScpOperator 识别保留
 			Args: Args{
-				"content": WarpURL(defaultSubInfoURL, IsGithubProxy),
-				"mode":    "link",
+				"content":        string(script.EmbeddedSubInfoJS),
+				"mode":           "script",
+				"editorLanguage": "javascript",
 				"arguments": Args{
 					"showLastUpdate": "true",
 				},
@@ -431,47 +423,32 @@ func rebuildSubInfoContent(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 
+	if op.Args == nil {
+		op.Args = make(map[string]any)
+	}
+
+	// 提取当前模式和内容
+	mode, _ := op.Args["mode"].(string)
 	content, _ := op.Args["content"].(string)
 
-	// 剥离旧代理前缀，还原原始 URL（stripGhProxy 保留 #fragment）
-	bare := stripGhProxy(content)
-
-	// 分离 base 与 fragment，fragment 原样保留
-	base, fragment, hasFragment := strings.Cut(bare, "#")
-
-	newContent := WarpURL(base, IsGithubProxy)
-	if hasFragment {
-		newContent += "#" + fragment
+	// 如果还是旧版的 link 模式，但 URL 中已经找不到预设关键词，
+	// 说明用户自己魔改了 URL。此时我们尊重用户操作，原样返回，不进行覆盖。
+	if mode == "link" && !strings.Contains(content, subInfoURLKeyword) {
+		return op, nil
 	}
-	op.Args["content"] = newContent
+	// 否则强制覆盖更新内容为当前程序编译进的最新的内置脚本
+	op.Args["mode"] = "script"
+	op.Args["content"] = string(script.EmbeddedSubInfoJS)
+	op.Args["editorLanguage"] = "javascript"
 
-	return op, nil
-}
-
-// stripGhProxy 剥离 GitHub 代理前缀，还原为原始 URL
-// 支持两种格式：
-//   - https://proxy.domain/https://raw.githubusercontent.com/...  （前缀拼接完整 URL）
-//   - https://proxy.domain/raw.githubusercontent.com/...          （省略 https:// 的短格式）
-func stripGhProxy(rawURL string) string {
-	// 常见 GitHub 原始地址特征
-	markers := []string{
-		"https://raw.githubusercontent.com",
-		"https://github.com",
-		"raw.githubusercontent.com",
-		"github.com",
-	}
-	for _, marker := range markers {
-		idx := strings.Index(rawURL, marker)
-		if idx > 0 {
-			candidate := rawURL[idx:]
-			// 短格式：raw.githubusercontent.com 没有 https://，补上
-			if !strings.HasPrefix(candidate, "https://") {
-				candidate = "https://" + candidate
-			}
-			return candidate
+	// 保留或者初始化用户的自定义 arguments
+	if _, ok := op.Args["arguments"]; !ok {
+		op.Args["arguments"] = map[string]any{
+			"showLastUpdate": "true",
 		}
 	}
-	return rawURL
+
+	return op, nil
 }
 
 // canonicalURL 剥离当前配置的 Github Proxy 前缀，再规范化为 raw.githubusercontent.com 直链。
@@ -583,7 +560,7 @@ func mergeFileProcess(existing []json.RawMessage, scpOps []any) ([]any, error) {
 // 资源构建
 
 func newDefaultSub(data []byte) sub {
-	icon := WarpURL("https://raw.githubusercontent.com/sinspired/subs-check-pro-webui/main/webui/static/icon/favicon.svg", IsGithubProxy)
+	icon := "/scp/subs-check-pro.svg"
 	return sub{
 		Name:           SubName,
 		DisplayName:    SubName,
@@ -643,8 +620,7 @@ func newSingboxFile(name, jsURL, jsonURL string) file {
 		remark = "默认 Sing-Box-" + version + " 订阅 (带分流规则)"
 	}
 
-	// icon := "https://singbox.app/wp-content/uploads/2025/06/cropped-logo-278x300.webp"
-	icon := WarpURL("https://raw.githubusercontent.com/sinspired/subs-check-pro-webui/main/webui/static/icon/singbox.svg", IsGithubProxy)
+	icon := "/scp/sing-box.svg"
 	return file{
 		Name:        name,
 		Remark:      remark,
@@ -846,13 +822,33 @@ func UpdateSubStore(yamlData []byte) {
 	UpdateSubStorePartial(yamlData, true, true, true, true)
 }
 
+// 判断是否需要做耗时的 GetGhProxy 探活
+func needGhProxy(doSub, doMihomo, doSbLatest, doSbOld bool) bool {
+	if doMihomo && !IsLocalURL(config.GlobalConfig.MihomoOverwriteURL) {
+		return true
+	}
+	if doSbLatest {
+		if !IsLocalURL(config.GlobalConfig.SingboxLatest.JS) ||
+			!IsLocalURL(config.GlobalConfig.SingboxLatest.JSON) {
+			return true
+		}
+	}
+	if doSbOld {
+		if !IsLocalURL(config.GlobalConfig.SingboxOld.JS) ||
+			!IsLocalURL(config.GlobalConfig.SingboxOld.JSON) {
+			return true
+		}
+	}
+	return false
+}
+
 // UpdateSubStorePartial 按需精准更新指定的配置 (供 API 调用)
 func UpdateSubStorePartial(yamlData []byte, doSub, doMihomo, doSbLatest, doSbOld bool) {
 	subStoreMu.Lock()
 	defer subStoreMu.Unlock()
 
-	// 只有涉及到这三者才做耗时的 GetGhProxy 探活
-	if doMihomo || doSbLatest || doSbOld {
+	// 只有涉及到这几者才做耗时的 GetGhProxy 探活
+	if needGhProxy(doSub, doMihomo, doSbLatest, doSbOld) {
 		IsGithubProxy = GetGhProxy()
 	}
 

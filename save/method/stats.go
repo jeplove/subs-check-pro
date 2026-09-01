@@ -23,7 +23,6 @@ func NewStatsSaver() (*StatsSaver, error) {
 		return nil, fmt.Errorf("获取可执行文件路径失败")
 	}
 
-	
 	var outputPath string
 	defaultConfigDir := filepath.Join(basePath, "config")
 

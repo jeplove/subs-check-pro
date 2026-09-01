@@ -54,7 +54,9 @@ http://127.0.0.1:8299/path/api/file/mihomo
 
 ## 🚀 sing-box 订阅（带分流规则）
 
-项目默认支持 `sing-box` 最新版（1.12）和 1.11（iOS 兼容）规则，可自定义规则。
+项目默认支持 `sing-box` 最新版 `1.14.x`和 `1.11.x`（iOS 兼容）规则，可自定义规则。
+
+> sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除 `1.11.x`（iOS 兼容）规则
 
 ✨ 在 WebUI 点击“分享订阅”获取订阅链接：
 
@@ -69,13 +71,13 @@ http://127.0.0.1:8299/path/api/file/mihomo
 # singbox 每个版本规则不兼容，须根据客户端版本选择合适的规则
 # singbox 最新版
 singbox-latest:
-  version: 1.12
+  version: 1.14
   json:
-    - https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.json
+    - https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.json
   js:
-    - https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.js
+    - https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.js
 
-# singbox 1.11 版本配置（iOS 兼容）
+# singbox 1.11 版本配置（iOS 兼容）；sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除
 singbox-old:
   version: 1.11
   json:

@@ -95,7 +95,11 @@ func GetProxyCountry(httpClient *http.Client, db *maxminddb.Reader, getAnalyzedC
 		slog.Debug("创建 MeAPI 客户端失败", "error", err)
 		goto NextClient
 	} else {
-		defer cliMe.Close()
+		defer func() {
+			if cerr := cliMe.Close(); cerr != nil {
+				slog.Warn("关闭 ipinfo 客户端失败", "err", cerr)
+			}
+		}()
 	}
 
 	for range config.GlobalConfig.SubUrlsReTry {
@@ -117,7 +121,11 @@ NextClient:
 	if err != nil || cli == nil {
 		slog.Debug("创建 ipinfo 主客户端失败", "error", err)
 	} else {
-		defer cli.Close()
+		defer func() {
+			if cerr := cli.Close(); cerr != nil {
+				slog.Warn("关闭 ipinfo 客户端失败", "err", cerr)
+			}
+		}()
 		loc, ip, countryCodeTag, ispTag, err = cli.GetAnalyzed(getAnalyzedCtx, cfLoc, cfIP)
 		if err != nil {
 			slog.Debug("Analyzed 获取节点位置失败", "error", err)

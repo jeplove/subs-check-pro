@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -64,6 +65,17 @@ var (
 	// 标记 SubStore 是否正在后台更新
 	subStoreSyncing atomic.Bool
 )
+
+func init() {
+	// 全局注册扩展名的 MIME 类型并强制指定 utf-8 编码，解决浏览器直接打开时的乱码问题
+	// 使用 text/plain 可以让浏览器直接展示 yaml 而不是触发下载
+	mime.AddExtensionType(".yaml", "text/plain; charset=utf-8")
+	mime.AddExtensionType(".yml", "text/plain; charset=utf-8")
+	mime.AddExtensionType(".txt", "text/plain; charset=utf-8")
+	mime.AddExtensionType(".md", "text/plain; charset=utf-8")
+	mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
+	mime.AddExtensionType(".json", "application/json; charset=utf-8")
+}
 
 // initHTTPServer 初始化并启动HTTP服务器
 func (app *App) initHTTPServer() error {
@@ -143,7 +155,8 @@ func (app *App) initHTTPServer() error {
 	webUIURL := "http://localhost:" + strings.TrimPrefix(listenAddr, ":") + AdminPath
 
 	if config.GlobalConfig.EnableWebUI {
-		slog.Info("启用Web控制面板", "path", webUIURL, "api-key", config.GlobalConfig.APIKey)
+		slog.Info("启用Web管理界面", "path", webUIURL, "api-key", config.GlobalConfig.APIKey)
+		slog.Info("远程Web管理就绪", "info", "公网域名访问建议使用Cloudflare隧道映射")
 	} else {
 		slog.Info("HTTP 服务器启动", "port", strings.TrimPrefix(listenAddr, ":"))
 	}

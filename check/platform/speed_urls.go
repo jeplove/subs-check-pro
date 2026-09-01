@@ -4,7 +4,7 @@ package platform
 var SpeedTestURLs = []string{
 	// === 1. 专用速度测试服务器 (Global / Unspecified) ===
 	// thinkbroadband (英国)
-	"https://download.thinkbroadband.com/512MB.zip",     // 512MB ZIP
+	"https://download.thinkbroadband.com/512MB.zip", // 512MB ZIP
 	// Tele2 (欧洲)
 	"https://speedtest.tele2.net/1GB.zip", // 1GB ZIP
 	// CacheFly (全球 CDN)
@@ -12,13 +12,13 @@ var SpeedTestURLs = []string{
 
 	// === 2. 专用速度测试服务器 (Regional - Asia) ===
 	// Datapacket/CDN77 (香港)
-	"https://hkg.download.datapacket.com/1000mb.bin",  // 1GB
+	"https://hkg.download.datapacket.com/1000mb.bin", // 1GB
 	// Datapacket/CDN77 (新加坡)
-	"https://sgp.download.datapacket.com/1000mb.bin",  // 1GB
+	"https://sgp.download.datapacket.com/1000mb.bin", // 1GB
 	// Datapacket/CDN77 (东京)
-	"https://tyo.download.datapacket.com/1000mb.bin",  // 1GB
+	"https://tyo.download.datapacket.com/1000mb.bin", // 1GB
 	// OVH (新加坡)
-	"https://sgp.proof.ovh.net/files/1Gb.dat",   // 1GB
+	"https://sgp.proof.ovh.net/files/1Gb.dat", // 1GB
 	// Vultr (新加坡)
 	"https://sgp-ping.vultr.com/vultr.com.1000MB.bin", // 1GB
 	// Vultr (东京)
@@ -28,39 +28,39 @@ var SpeedTestURLs = []string{
 
 	// === 3. 专用速度测试服务器 (Regional - Europe) ===
 	// OVH (Generic)
-	"https://proof.ovh.net/files/1Gb.dat",    // 1GB
+	"https://proof.ovh.net/files/1Gb.dat", // 1GB
 	// DigitalOcean (伦敦 LON1)
 	"https://speedtest-lon1.digitalocean.com/100mb.test", // 100mb
 	// Hetzner (Nuremberg, 德国)
-	"https://nbg1-speed.hetzner.com/1GB.bin",   // 1GB
+	"https://nbg1-speed.hetzner.com/1GB.bin", // 1GB
 	// Vultr (Frankfurt, 德国)
 	"https://fra-de-ping.vultr.com/vultr.com.1000MB.bin", // 1GB
 	// Hivelocity (Frankfurt, 德国)
 	"https://speedtest.fra1.hivelocity.net/10GiB.file", // 10GB
 	// Datapacket/CDN77 (巴黎)
-	"https://par.download.datapacket.com/1000mb.bin",  // 1GB
+	"https://par.download.datapacket.com/1000mb.bin", // 1GB
 	// OVH (Gravelines, 法国)
-	"https://gra.proof.ovh.net/files/1Gb.dat",   // 1GB
+	"https://gra.proof.ovh.net/files/1Gb.dat", // 1GB
 
 	// === 4. 专用速度测试服务器 (Regional - North America) ===
 	// Hetzner (Ashburn, VA, US East)
-	"https://ash-speed.hetzner.com/1GB.bin",  // 1GB
+	"https://ash-speed.hetzner.com/1GB.bin", // 1GB
 	// Linode/Akamai (Fremont, CA, US West)
 	"https://speedtest.fremont.linode.com/1000MB-fremont.bin", // 1GB
 	// DigitalOcean (New York NYC1)
 	"https://speedtest-nyc1.digitalocean.com/1000mb.test", // 1GB
 	// Datapacket/CDN77 (Los Angeles, US West)
-	"https://lax.download.datapacket.com/1000mb.bin",  // 1GB
+	"https://lax.download.datapacket.com/1000mb.bin", // 1GB
 	// OVH (Hillsboro, OR, US West)
-	"https://hil.proof.ovh.us/files/1Gb.dat",   // 1GB
+	"https://hil.proof.ovh.us/files/1Gb.dat", // 1GB
 	// Vultr (Los Angeles, US West)
 	"https://lax-ca-us-ping.vultr.com/vultr.com.1000MB.bin", // 1GB
 	// Hetzner (Hillsboro, OR, US West)
 	"https://hil-speed.hetzner.com/10GB.bin", // 10GB
 	// Datapacket/CDN77 (Ashburn, VA, US East)
-	"https://ash.download.datapacket.com/1000mb.bin",  // 1GB
+	"https://ash.download.datapacket.com/1000mb.bin", // 1GB
 	// OVH (Vint Hill, VA, US East)
-	"https://vin.proof.ovh.us/files/1Gb.dat",   // 1GB
+	"https://vin.proof.ovh.us/files/1Gb.dat", // 1GB
 	// Vultr (New Jersey, US East)
 	"https://nj-us-ping.vultr.com/vultr.com.1000MB.bin", // 1GB
 

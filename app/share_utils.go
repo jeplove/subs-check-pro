@@ -101,7 +101,7 @@ func readDirFiles(dirPath string) []FileEntry {
 		}
 		files = append(files, FileEntry{
 			Name:    e.Name(),
-			Size: strconv.FormatFloat(float64(info.Size())/1024, 'f', 1, 64) + " KB",
+			Size:    strconv.FormatFloat(float64(info.Size())/1024, 'f', 1, 64) + " KB",
 			ModTime: info.ModTime().Format("01-02 15:04"),
 		})
 	}

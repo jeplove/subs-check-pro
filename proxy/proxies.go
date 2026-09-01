@@ -554,13 +554,16 @@ func processSubscription(
 			}
 		}
 
-		// 统一清洗节点字段，注入默认值
-		parse.NormalizeNode(node)
+		// 统一清洗节点字段，并直接利用返回值拦截无效节点
+		if !parse.NormalizeNode(node) {
+			// 返回 true 表示跳过此节点，继续处理下一个（yield 语义）
+			return true
+		}
 
 		// 有效性校验
 		serverStr := strings.TrimSpace(fmt.Sprintf("%v", node["server"]))
 		port := parse.ToIntPort(node["port"])
-		if serverStr == "" || serverStr == "<nil>" || port <= 0 || port > 65535 || node["type"] == nil {
+		if serverStr == "" || serverStr == "<nil>" || port <= 0 || port > 65535 || node["type"] == nil || node["type"] == "invalid" {
 			slog.Debug("过滤掉无效的畸形节点", "订阅", urlStr, "数据", node)
 			return true
 		}

@@ -93,7 +93,7 @@ func detectSuccessNotify(currentVersion string, latest *selfupdate.Release) {
 	}
 
 	if needNotify {
-		fmt.Println("\033[32m🔎 详情查看: https://github.com/sinspired/subs-check-pro/v2")
+		fmt.Println("\033[32m🔎 详情查看: https://github.com/sinspired/subs-check-pro")
 
 		var downloadURL string
 		switch {
@@ -127,9 +127,9 @@ func (app *App) updateSuccess(current string, latest string, silentUpdate bool) 
 
 	// 发送更新成功通知
 	utils.SendNotifySelfUpdate(current, latest)
-	if err := restartSelf(silentUpdate); err != nil {
-		slog.Error("重启失败", "err", err)
-	}
+
+	// 重启应用
+	restartSelf(silentUpdate)
 }
 
 // restartSelf 跨平台自启

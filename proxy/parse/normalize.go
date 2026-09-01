@@ -2,24 +2,26 @@ package parse
 
 import (
 	"fmt"
+	"github.com/goccy/go-json"
 	"log/slog"
 	"strconv"
 	"strings"
 )
 
-// NormalizeNode 统一清洗节点字段
+// NormalizeNode 统一清洗节点字段并验证节点合法性
 // 将各种非标准或类型不确定的字段转换为 Clash/Mihomo 标准格式
-func NormalizeNode(m map[string]any) {
+// 返回 bool 表示该节点是否为有效节点（有效返回 true，无效应当丢弃）
+func NormalizeNode(m map[string]any) bool {
 	if m == nil {
-		return
+		return false
 	}
 
-	// 不一定需要转换
+	// 1. 端口转换
 	if p, ok := m["port"]; ok {
 		m["port"] = ToIntPort(p)
 	}
 
-	// Mihomo decoder 在处理非 bool 类型的布尔字段时可能 panic
+	// 2. Mihomo decoder 在处理非 bool 类型的布尔字段时可能 panic
 	for _, field := range []string{
 		"tls", "udp", "skip-cert-verify", "tfo",
 		"allow-insecure", "xudp", "reuse-addr", "disable-sni",
@@ -35,7 +37,7 @@ func NormalizeNode(m map[string]any) {
 	// 3. 协议类型：统一小写
 	tObj, hasType := m["type"]
 	if !hasType {
-		return
+		return false // 连 type 都没有的节点绝对是无效的
 	}
 	t := strings.ToLower(fmt.Sprintf("%v", tObj))
 	m["type"] = t
@@ -46,6 +48,7 @@ func NormalizeNode(m map[string]any) {
 		// Mihomo 不认识 "https" type，转换为标准写法
 		m["type"] = "http"
 		m["tls"] = true
+		t = "http" // 同步更新 t，方便后面的终极校验
 	case "trojan":
 		// 来源数据经常漏 tls 字段，Trojan 协议本身强依赖 TLS
 		if _, hasTLS := m["tls"]; !hasTLS {
@@ -74,7 +77,6 @@ func NormalizeNode(m map[string]any) {
 				xhttpOpts["path"] = "/"
 			}
 			m["xhttp-opts"] = xhttpOpts
-			// delete(m, "path") // FIXME: 验证是否应清理
 		}
 
 	case "hysteria2", "hy2":
@@ -83,10 +85,38 @@ func NormalizeNode(m map[string]any) {
 			m["obfs-password"] = val
 			delete(m, "obfs_password")
 		}
+
+	// WireGuard 致命参数拦截
+	case "wireguard", "wg":
+		pk, _ := m["private-key"].(string)
+		pubk, _ := m["public-key"].(string)
+
+		if pk == "" || pubk == "" {
+			m["type"] = "invalid"
+			t = "invalid"
+			slog.Debug("发现缺失公钥或私钥的畸形 WireGuard 节点，已拦截", "name", m["name"])
+		}
 	}
 
 	// WS 扁平字段整合：ws-path / ws-headers → ws-opts
 	normalizeWsFields(m)
+
+	// 5. 终极有效性校验
+	if t == "" || t == "invalid" {
+		return false
+	}
+
+	server := strings.TrimSpace(fmt.Sprintf("%v", m["server"]))
+	port := ToIntPort(m["port"])
+
+	// 豁免本地和特殊策略类型（direct, reject, dns 等）
+	if t != "direct" && t != "reject" && t != "dns" {
+		if server == "" || server == "<nil>" || port <= 0 || port > 65535 {
+			return false
+		}
+	}
+
+	return true
 }
 
 func normalizeWsFields(m map[string]any) {
@@ -171,6 +201,12 @@ func ToIntPort(v any) int {
 		return int(val)
 	case float64:
 		return int(val)
+		// 很多 JSON 解析器开启 UseNumber 选项时会产生该类型
+	case json.Number:
+		if p, err := val.Int64(); err == nil {
+			return int(p)
+		}
+		return 0
 	// 字符串（如 "443" 或 "443.0"）
 	case string:
 		s := strings.TrimSpace(val)
@@ -182,18 +218,6 @@ func ToIntPort(v any) int {
 		}
 		return 0
 	default:
-		// 兜底：转字符串解析，并记录类型信息便于未来扩展
-		s := fmt.Sprintf("%v", v)
-		if i := strings.IndexByte(s, '.'); i > 0 {
-			s = s[:i]
-		}
-		if p, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-			slog.Debug("ToIntPort: 兜底转换成功，建议添加显式 case",
-				"type", fmt.Sprintf("%T", v), "value", v)
-			return p
-		}
-		slog.Warn("ToIntPort: 无法转换端口，请检查数据来源",
-			"type", fmt.Sprintf("%T", v), "value", v)
 		return 0
 	}
 }

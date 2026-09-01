@@ -252,8 +252,9 @@ func ConvertSingBoxOutbounds(outbounds []any) []map[string]any {
 			}
 		}
 
-		NormalizeNode(conv)
-		res = append(res, conv)
+		if NormalizeNode(conv) {
+			res = append(res, conv)
+		}
 	}
 	return res
 }
@@ -318,11 +319,12 @@ func ConvertProtocolMap(con map[string]any) []map[string]any {
 // ParseProxyLinksAndConvert 统一处理链接列表
 // 能够同时处理 WireGuard, SSR (手动解析) 和 V2Ray/Clash 支持的标准协议 (调用 Mihomo)
 // subURL 用于在猜测协议时提供上下文 (例如文件名包含 socks5)
-// 
+//
 // 返回值：(去重后的节点列表, 批次级别去重掉的节点数量)
 func ParseProxyLinksAndConvert(links []string, subURL string) ([]map[string]any, int) {
 	var finalNodes []map[string]any
 	var batchLinks []string
+	var directNodes []map[string]any // 用于存放免解析直接组装的节点
 	var batchDeduped int
 
 	// 获取文件名推测的协议（作为上下文参考）
@@ -373,7 +375,7 @@ func ParseProxyLinksAndConvert(links []string, subURL string) ([]map[string]any,
 			// 简单的合法性校验，防止将普通文本误判为节点
 			if host != "" && port != "" {
 				if isDigit(port) {
-					if _, err := strconv.Atoi(port); err == nil {
+					if pNum, err := strconv.Atoi(port); err == nil {
 						prefix, isKnown := protocolSchemes[fileGuessedScheme]
 
 						// 只有当文件名暗示了明确的、非通用的代理协议 (如 vmess, ss, hysteria) 时，才使用单一前缀。
@@ -383,19 +385,27 @@ func ParseProxyLinksAndConvert(links []string, subURL string) ([]map[string]any,
 							batchLinks = append(batchLinks, prefix+host+":"+port)
 						} else {
 							slog.Debug("未发现协议，同时生成http(s)/socks5协议", "raw", subURL, "数量", len(links))
+							// 直接组装对象，绕过字符串 URI 拼装和 Mihomo 解析
 							if fileGuessedScheme != "all" {
-								if len(links) >= 100000 {
-									batchLinks = append(batchLinks, "https://"+host+":"+port)
-								} else {
-									// TODO: 使用配置文件控制
-									// (无协议 或 http/https)
-									// 同时生成 3 种最常见的标准代理协议，交给后续连通性测试去筛选
-									// 1. 尝试 HTTPS (type: http, tls: true)
-									batchLinks = append(batchLinks, "https://"+host+":"+port)
-									// 2. 尝试 SOCKS5
-									batchLinks = append(batchLinks, "socks5://"+host+":"+port)
-									// 3. 尝试 HTTP (type: http, tls: false)
-									batchLinks = append(batchLinks, "http://"+host+":"+port)
+								baseName := fmt.Sprintf("Auto-%s:%s", host, port)
+
+								// TODO: 使用配置文件控制
+								// (无协议 或 http/https)
+								// 同时生成 3 种最常见的标准代理协议，交给后续连通性测试去筛选
+								// HTTPS
+								directNodes = append(directNodes, map[string]any{
+									"type": "http", "server": host, "port": pNum, "tls": true, "name": baseName + "-HTTPS",
+								})
+
+								if len(links) < 100000 {
+									// HTTP
+									directNodes = append(directNodes, map[string]any{
+										"type": "http", "server": host, "port": pNum, "tls": false, "name": baseName + "-HTTP",
+									})
+									// SOCKS5
+									directNodes = append(directNodes, map[string]any{
+										"type": "socks5", "server": host, "port": pNum, "name": baseName + "-SOCKS5",
+									})
 								}
 							}
 						}
@@ -405,50 +415,66 @@ func ParseProxyLinksAndConvert(links []string, subURL string) ([]map[string]any,
 		}
 	}
 
-	// 3. 批量转换剩余链接
-	if len(batchLinks) > 0 {
-		batchLinks = lo.Uniq(batchLinks)
+	// 初始化并发去重工具
+	batchLinks = lo.Uniq(batchLinks)
+	seen := make(map[string]struct{}, len(batchLinks)+len(directNodes))
+	var mu sync.Mutex
 
-		// 持久化去重表：贯穿所有 chunk，避免每个 chunk 后对全量
-		// finalNodes 重新扫描（旧实现是 O(n²/chunkSize)）。
-		seen := make(map[string]struct{}, len(batchLinks))
-		appendUnique := func(nodes []map[string]any) {
-			for _, n := range nodes {
-				k := utils.NodeKey(n)
-				if _, dup := seen[k]; dup {
-					batchDeduped++
-					continue
-				}
-				seen[k] = struct{}{}
-				finalNodes = append(finalNodes, n)
+	appendUnique := func(nodes []map[string]any) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, n := range nodes {
+			k := utils.NodeKey(n)
+			if _, dup := seen[k]; dup {
+				batchDeduped++
+				continue
+			}
+			seen[k] = struct{}{}
+			finalNodes = append(finalNodes, n)
+		}
+	}
+
+	// 处理之前跳过解析直接组装的 Node
+	if len(directNodes) > 0 {
+		var validDirect []map[string]any
+		for _, n := range directNodes {
+			if NormalizeNode(n) { // 经过一层标准洗礼以防万一
+				validDirect = append(validDirect, n)
 			}
 		}
-		const chunkSize = 10000 // 每次最多喂给 Mihomo 10000 条，保护内存
+		appendUnique(validDirect)
+	}
+
+	// 3. 并发分块转换剩余链接
+	if len(batchLinks) > 0 {
+		const chunkSize = 10000
+		var wg sync.WaitGroup
+
 		for i := 0; i < len(batchLinks); i += chunkSize {
 			end := min(i+chunkSize, len(batchLinks))
-
 			chunk := batchLinks[i:end]
-			data := []byte(strings.Join(chunk, "\n"))
 
-			// 两个转换各自只认识自己支持的部分，互不替代
+			wg.Add(1)
+			go func(c []string) {
+				defer wg.Done()
+				data := []byte(strings.Join(c, "\n"))
 
-			// 标准转换 ConvertsV2Ray 处理标准协议链接
-			if nodes, err := convert.ConvertsV2Ray(data); err == nil && len(nodes) > 0 {
-				slog.Debug("标准转换成功", "数量", len(nodes))
-				// for i, node := range nodes {
-				// 	nodeJSON, _ := json.Marshal(node)
-				// 	slog.Debug("标准节点", "index", i, "node", string(nodeJSON))
-				// }
-				// patchXhttpOpts(nodes, data) // 补丁：修复 xhttp 缺失字段
-				appendUnique(ToNormalizeNodes(nodes))
-			}
-			// 扩展转换 ConvertsV2RayExtra 处理非标准/扩展协议链接
-			if nodes, err := ConvertsV2RayExtra(data); err == nil && len(nodes) > 0 {
-				slog.Debug("扩展转换成功", "数量", len(nodes))
-				// patchXhttpOpts(nodes, data)
-				appendUnique(ToNormalizeNodes(nodes))
-			}
+				var chunkNodes []map[string]any
+				// 标准转换
+				if nodes, err := convert.ConvertsV2Ray(data); err == nil && len(nodes) > 0 {
+					slog.Debug("标准转换成功", "数量", len(nodes))
+					chunkNodes = append(chunkNodes, ToNormalizeNodes(nodes)...)
+				}
+				// 扩展转换
+				if nodes, err := ConvertsV2RayExtra(data); err == nil && len(nodes) > 0 {
+					slog.Debug("扩展转换成功", "数量", len(nodes))
+					chunkNodes = append(chunkNodes, ToNormalizeNodes(nodes)...)
+				}
+
+				appendUnique(chunkNodes)
+			}(chunk)
 		}
+		wg.Wait()
 	}
 
 	slog.Debug("解析数量", "finalNodes", len(finalNodes), "批次去重", batchDeduped)
@@ -482,7 +508,11 @@ func ParseWireGuardURI(link string) map[string]any {
 		node["mtu"] = ToIntPort(mtu)
 	}
 	if addr := q.Get("address"); addr != "" {
-		node["ip"] = strings.Split(addr, "/")[0]
+		// Mihomo 依赖标准的 CIDR 格式
+		if !strings.Contains(addr, "/") {
+			addr += "/32" // 如果订阅没有提供掩码，主动补充默认掩码
+		}
+		node["ip"] = addr
 	}
 
 	if res := q.Get("reserved"); res != "" {
@@ -572,8 +602,10 @@ func ConvertGeneralJSONArray(list []any) []map[string]any {
 			if name, ok := m["remarks"].(string); ok && name != "" && node["name"] == nil {
 				node["name"] = name
 			}
-			NormalizeNode(node)
-			nodes = append(nodes, node)
+			if NormalizeNode(node) {
+				nodes = append(nodes, node)
+			}
+
 			continue
 		}
 
@@ -605,8 +637,9 @@ func ConvertGeneralJSONArray(list []any) []map[string]any {
 					node["name"] = fmt.Sprintf("ss-%v:%d", m["server"], ToIntPort(m["server_port"]))
 				}
 
-				NormalizeNode(node)
-				nodes = append(nodes, node)
+				if NormalizeNode(node) {
+					nodes = append(nodes, node)
+				}
 			}
 		}
 	}
@@ -643,9 +676,9 @@ func ExtractAndParseProxies(data []byte) []map[string]any {
 		// 尝试解析 YAML
 		if err := yaml.Unmarshal(buffer.Bytes(), &c); err == nil {
 			for _, p := range c.Proxies {
-				NormalizeNode(p)
-				nodes = append(nodes, p)
-
+				if NormalizeNode(p) {
+					nodes = append(nodes, p)
+				}
 			}
 		}
 		buffer.Reset()
@@ -701,17 +734,16 @@ func ParseYamlFlowList(data []byte) []map[string]any {
 	// 默认 64k 对于 flow yaml 通常足够，如果遇到超长行可能会需要调整，但一般代理配置不会单行超 64k
 	scanner.Buffer(make([]byte, 64*1024), 2048*1024)
 
+	var batchYaml bytes.Buffer // 集中收集所有有效的 flow 节点
+
 	for scanner.Scan() {
 		lineBytes := bytes.TrimSpace(scanner.Bytes())
 
-		if len(lineBytes) == 0 {
+		// 1. 结构特征检查：必须包含 key-value 分隔符 ":" 以及 flow 格式的特征 "{", "}"
+		if len(lineBytes) == 0 || !bytes.Contains(lineBytes, []byte(":")) {
 			continue
 		}
 
-		// 1. 结构特征检查：必须包含 key-value 分隔符 ":" 以及 flow 格式的特征 "{", "}"
-		if !bytes.Contains(lineBytes, []byte(":")) {
-			continue
-		}
 		// 依赖 '{' 和 '}' 来判断是否为 flow 格式
 		if !bytes.Contains(lineBytes, []byte("{")) || !bytes.Contains(lineBytes, []byte("}")) {
 			continue
@@ -740,22 +772,23 @@ func ParseYamlFlowList(data []byte) []map[string]any {
 		// 4. 构造合法的 YAML 列表项字符串
 		// 只有通过了上述所有检查，才进行 string 转换和拼接，这是必要的开销
 		// 构造形式： "- { ... }"
-		yamlLine := "- " + string(cleanBytes)
+		// 将有效行作为 YAML 列表项写入 Buffer
+		batchYaml.WriteString("- ")
+		batchYaml.Write(cleanBytes)
+		batchYaml.WriteString("\n")
+	}
 
+	// 循环结束后，一次性执行最昂贵的反序列化
+	if batchYaml.Len() > 0 {
 		var tempNodes []map[string]any
-		// 执行昂贵的 Unmarshal
-		if err := yaml.Unmarshal([]byte(yamlLine), &tempNodes); err == nil && len(tempNodes) > 0 {
+		if err := yaml.Unmarshal(batchYaml.Bytes(), &tempNodes); err == nil {
 			for _, m := range tempNodes {
-				NormalizeNode(m)
-				// 解析后再次校验关键字段，确保数据的完整性
-				if _, hasServer := m["server"]; hasServer {
+				// 利用我们刚才修改的 bool 返回值直接拦截
+				if NormalizeNode(m) {
 					nodes = append(nodes, m)
 				}
 			}
 		}
-		// else {
-		// 	// TODO: 如果标准解析失败（例如引号嵌套错误），尝试简单的正则提取修复
-		// }
 	}
 
 	if len(nodes) > 0 {
@@ -931,8 +964,9 @@ func ParseV2RayJSONLines(data []byte) []map[string]any {
 			}
 		}
 
-		NormalizeNode(node)
-		nodes = append(nodes, node)
+		if NormalizeNode(node) {
+			nodes = append(nodes, node)
+		}
 	}
 	return nodes
 }
@@ -1049,23 +1083,26 @@ func ParseBracketKVProxies(data []byte) []map[string]any {
 			}
 		}
 
-		NormalizeNode(node)
-		nodes = append(nodes, node)
+		if NormalizeNode(node) {
+			nodes = append(nodes, node)
+		}
 	}
 	return nodes
 }
 
-// ToNormalizeNodes 将 Mihomo 的转换结果进行标准化输出
+// ToNormalizeNodes 将 Mihomo 的转换结果进行标准化输出，并过滤掉无效节点
 func ToNormalizeNodes(list []map[string]any) []map[string]any {
 	if list == nil {
 		return nil
 	}
-	for i, v := range list {
-		// 立即进行标准化，防止后续处理遇到类型不一致问题
-		NormalizeNode(v)
-		list[i] = v
+	var res []map[string]any
+	for _, v := range list {
+		// 只有合法节点才会被加入最终结果
+		if NormalizeNode(v) {
+			res = append(res, v)
+		}
 	}
-	return list
+	return res
 }
 
 // ExtractV2RayLinks 正则提取逻辑

@@ -276,22 +276,25 @@ func Check() ([]Result, error) {
 	// 设置之前成功的节点顺序在前
 	headSize := subWasSuccedLength
 	if len(proxies) > headSize {
-		// 假设有 15 个相似的ip
+		// 假设有 15 个相似的 IP/域名
 		calcMinSpacing := max(config.GlobalConfig.Concurrent*5, len(proxies)/15)
 
-		// 随机乱序并根据 server 字段打乱节点顺序, 减少测速直接测死的概率
+		// 随机乱序并根据 IP/域名/真实Host 打乱节点顺序, 减少测速直接测死的概率
 		cfg := proxyutils.ShuffleConfig{
-			Threshold:  float64(config.GlobalConfig.Threshold), // CIDR/24 相同, 避免在一组(0.5: CIDR/16)
-			Passes:     3,                                      // 改善轮数（1~3）
-			MinSpacing: calcMinSpacing,                         // CIDR/24 相同, 设置最小间隔
-			ScanLimit:  config.GlobalConfig.Concurrent * 2,     // 冲突向前扫描的最大距离
+			Threshold:  float64(config.GlobalConfig.Threshold),
+			Passes:     3,
+			MinSpacing: calcMinSpacing,
+			ScanLimit:  config.GlobalConfig.Concurrent * 2,
 		}
 
 		tail := proxies[headSize:]
 		proxyutils.SmartShuffleByServer(tail, cfg)
 
-		cidr := proxyutils.ThresholdToCIDR(cfg.Threshold)
-		slog.Info(fmt.Sprintf("节点乱序, 相同 CIDR%s 最小间距: %d", cidr, cfg.MinSpacing))
+		// 获取动态映射的 CIDR 和 域名层级 文本
+		cidr, domainLevel := proxyutils.ThresholdToLevel(cfg.Threshold)
+
+		// 动态输出到终端日志
+		slog.Info(fmt.Sprintf("节点乱序, 相同 CIDR %s 或 %s 最小间距: %d", cidr, domainLevel, cfg.MinSpacing))
 	}
 
 	CurrentStepName.Store("获取订阅完成")
@@ -892,7 +895,7 @@ func mediaCheck(job *ProxyJob, db *maxminddb.Reader, ctx context.Context) {
 	}
 
 	mediaClient := &http.Client{
-		Transport: job.Client.Client.Transport,
+		Transport: job.Client.Transport,
 		Timeout:   time.Duration(mediaTimeout) * time.Second,
 	}
 
@@ -1153,8 +1156,8 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 			}
 		case "youtube":
 			yt := res.Youtube
-			switch {
-			case yt == "":
+			switch yt {
+			case "":
 				// 不可达或封锁，无标签
 			default:
 				// 分离地区和 Premium 标记
@@ -1236,7 +1239,16 @@ type ProxyClient struct {
 }
 
 // CreateClient 创建独立的代理客户端
-func CreateClient(mapping map[string]any) *ProxyClient {
+func CreateClient(mapping map[string]any) (client *ProxyClient) {
+	// 捕获 panic，防止由于底层库解析畸形节点导致整个程序崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			name, _ := mapping["name"].(string)
+			slog.Debug("底层mihomo创建代理Client时发生Panic，已自动丢弃该畸形节点", "name", name, "panic", r)
+			client = nil // 发生panic时，向外层返回 nil
+		}
+	}()
+
 	pc := &ProxyClient{}
 
 	var err error
@@ -1336,7 +1348,9 @@ func (pc *ProxyClient) Close() {
 
 	// 关闭mihomo代理实例
 	if pc.mProxy != nil {
-		pc.mProxy.Close()
+		if err := pc.mProxy.Close(); err != nil {
+			slog.Error("关闭代理实例失败", "err", err)
+		}
 	}
 
 	// 关闭 HTTP 连接池
@@ -1417,8 +1431,7 @@ func isRetryable(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if netErr, ok := errors.AsType[net.Error](err); ok {
 		// Timeout() 涵盖 i/o timeout、TLS handshake timeout 等
 		return netErr.Timeout()
 	}

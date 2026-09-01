@@ -10,6 +10,12 @@ var EmbeddedSubStoreBackend []byte
 //go:embed frontend
 var EmbeddedSubStoreFrontend embed.FS
 
+//go:embed scp-logo.svg
+var EmbeddedSubsCheckProLogo  []byte
+
+//go:embed sing-box.svg
+var EmbeddedSingBoxLogo  []byte
+
 //go:embed ACL4SSR_Online_Full.yaml
 var EmbeddedOverrideYamlACL4SSR []byte
 

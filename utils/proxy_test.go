@@ -23,7 +23,7 @@ func TestIsDirectProxyConfig(t *testing.T) {
 	}{
 		{name: "direct", input: "direct", want: true},
 		{name: "mixed case", input: " Direct ", want: true},
-		{name: "proxy url", input: "http://127.0.0.1:7890", want: false},
+		{name: "proxy url", input: "http://127.0.0.1:10808", want: false},
 		{name: "empty", input: "", want: false},
 	}
 
@@ -61,16 +61,16 @@ func TestFindGhProxyFromConfig(t *testing.T) {
 	}
 
 	t.Logf("共找到 %d 个候选代理", len(cfg.GhProxyGroup))
-	runGhProxyDetection(t, cfg.GhProxyGroup, "test_gh_group.csv", "test_gh_group_detail.csv")
+	runGhProxyDetection(t, cfg.GhProxyGroup, "test_gh_config.csv", "test_gh_config_detail.csv")
 }
 
 // runGhProxyDetection 并发检测候选代理，输出两个 csv 文件并设置最佳代理
 func runGhProxyDetection(t *testing.T, proxies []string, listFile, detailFile string) {
 	if listFile == "" {
-		listFile = "test_gh.csv"
+		listFile = "test_gh_default.csv"
 	}
 	if detailFile == "" {
-		detailFile = "test_gh_detail.csv"
+		detailFile = "test_gh_default_detail.csv"
 	}
 	t.Helper()
 
@@ -206,6 +206,12 @@ func deduplicateStrings(ss []string) []string {
 
 // GitHub 代理列表
 var GhProxies = []string{
+	"https://gh-proxy.com",
+	"gh-proxy.org",
+	"cdn.gh-proxy.org",
+	"axisnow.gh-proxy.org",
+	"api.gitproxy.dev",
+	"githubdog.com",
 	"1.github.010716.xyz",
 	"113355.kabaka.xyz",
 	"80888888.xyz",

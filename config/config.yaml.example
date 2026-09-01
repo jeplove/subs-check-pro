@@ -84,11 +84,11 @@ total-speed-limit: 0
 # 出口水管就那么大，运营商只能优先保障直播、影视和游戏之类的正常流量
 speed-test-url: ""
 
-# 相似度阈值(Threshold)大致对应网段
-# 1.00 /32（完全相同 IP）
-# 0.75 /24（前三段相同）
-# 0.50 /16（前两段相同）
-# 0.25 /8（第一段相同）
+# 相似度阈值(Threshold)映射
+# 1.00 /32 (同 IP / 域名)
+# 0.75 /24 (同 C段 / 主域名)
+# 0.50 /16 (同 B段 / 二级域)
+# 0.25 /8  (同 A段 / 顶级域)
 # 以下设置仅能 [减少] 节点被测速测死的概率, 无法避免被 "反代机房" 中断节点
 threshold: 0.75
 
@@ -158,18 +158,28 @@ mihomo-overwrite-url: http://127.0.0.1:8199/Sinspired_Rules_CDN.yaml
 
 # sub-store 节点操作，针对默认的 sub 订阅
 sub-process:
+  # DNS 解析操作
   resolve-domain:
-    enable: false # 是否开启 DNS 解析
-    provider: ali # DNS 服务商（ali / cloudflare / google）
-    edns: "" # EDNS 设置
-    concurrency: 10 # 并发数，默认10，在代理软件中不要超过20
-    timeout: 8000 # 超时（毫秒），默认8000
-    type: ipv4 # ipv4 / ipv6
-    cache: enable # 缓存策略
-    cache-ttl: 3600 # 缓存时长(秒)
-
-  node-split: false # 开启节点裂变（将多 IP 展开为独立节点）
-  sub-info: false # 注入订阅流量信息节点
+    # 是否开启 DNS 解析
+    enable: false
+    # DNS 服务商（ali / cloudflare / google）
+    provider: ali
+    # EDNS 设置
+    edns: ""
+    # 并发数，默认10，在代理软件中不要超过20
+    concurrency: 10
+    # 超时（毫秒），默认8000
+    timeout: 8000
+    # 解析类型 ipv4 / ipv6
+    type: ipv4
+    # 缓存策略
+    cache: enable
+    # 缓存时长(秒)
+    cache-ttl: 3600
+  # 开启节点裂变（将多 IP 展开为独立节点）
+  node-split: false
+  # 注入订阅流量信息节点
+  sub-info: false
 
   # true=保留匹配节点（白名单），false=丢弃匹配节点（黑名单）
   regex-filter-keep: true
@@ -191,13 +201,14 @@ sub-process:
 # json文件为分流规则
 # js脚本用来根据规则对节点进行处理
 # singbox每个版本规则不兼容，须根据客户端版本选择合适的规则
-# singbox 最新版
+# singbox 最新版 1.14.x
 singbox-latest:
-  version: 1.12
-  json: "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.json"
-  js: "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.12.x/sing-box.js"
+  version: 1.14
+  json: "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.json"
+  js: "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.js"
 
-# singbox 1.11 版本配置（iOS 兼容）
+# singbox-old iOS 支持同时生成旧版 singbox 配置
+# ⚠️ sing-box MT 于 2026-08-31 上架 App Store 后，iOS 用户可使用最新 singbox 版本，将逐步移除该项配置
 singbox-old:
   version: 1.11
   json: "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.json"
@@ -397,6 +408,9 @@ system-proxy: ""
 github-proxy: ""
 # GitHub 代理列表：程序会自动筛选可用的 GitHub 代理
 ghproxy-group:
+  - https://gh-proxy.com/
+  - https://githubdog.com/
+  - https://axisnow.gh-proxy.org/
   - https://q-github.cnxiaobai.com/
   - https://gh.wglee.org/
   - https://hk.gh-proxy.org/

@@ -106,8 +106,8 @@ func parseGoMemLimit(s string) (int64, error) {
 		{"B", 1},
 	}
 	for _, u := range units {
-		if strings.HasSuffix(s, u.suffix) {
-			f, err := strconv.ParseFloat(strings.TrimSuffix(s, u.suffix), 64)
+		if before, ok := strings.CutSuffix(s, u.suffix); ok {
+			f, err := strconv.ParseFloat(before, 64)
 			if err != nil {
 				return 0, err
 			}

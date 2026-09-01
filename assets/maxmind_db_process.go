@@ -3,9 +3,9 @@ package assets
 
 import (
 	"bytes"
-	"github.com/goccy/go-json"
 	"errors"
 	"fmt"
+	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"

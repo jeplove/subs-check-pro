@@ -180,9 +180,11 @@ type Config struct {
 	Prerelease       bool     `yaml:"prerelease"`
 	UpdateTimeout    int      `yaml:"update-timeout"`
 
-	// SingboxLatest / SingboxOld iOS 仍停留在 1.11，兼容两个版本
+	// Singbox 支持最新版和 iOS 兼容版
 	SingboxLatest SingBoxConfig `yaml:"singbox-latest"`
-	SingboxOld    SingBoxConfig `yaml:"singbox-old"`
+
+	// Deprecated: SingboxOld iOS 兼容版本 1.11；sing-box MT 于 2026-08-31 上架 App Store 后将逐步移除
+	SingboxOld SingBoxConfig `yaml:"singbox-old"`
 
 	// SubProcess sub 订阅操作配置
 	SubProcess SubProcessConfig `yaml:"sub-process"`

@@ -32,6 +32,11 @@ func NormalizeGitHubRawURL(urlStr string) string {
 
 // WarpURL 添加github代理前缀
 func WarpURL(url string, isGhProxyAvailable bool) string {
+	// 本地地址直接返回
+	if IsLocalURL(url) {
+		return url
+	}
+
 	url = NormalizeGitHubRawURL(url)
 
 	if !isGhProxyAvailable {
@@ -95,8 +100,9 @@ func FormatTraffic(bytes uint64) string {
 //   - 空片段会被跳过
 //
 // 示例：
-//   JoinURL("http://example.com/", "/api/", "v1/", "/users")
-//   => "http://example.com/api/v1/users"
+//
+//	JoinURL("http://example.com/", "/api/", "v1/", "/users")
+//	=> "http://example.com/api/v1/users"
 func JoinURL(parts ...string) string {
 	if len(parts) == 0 {
 		return ""
@@ -109,7 +115,8 @@ func JoinURL(parts ...string) string {
 		if p == "" {
 			continue
 		}
-		out.WriteString("/");out.WriteString(strings.Trim(p, "/"))
+		out.WriteString("/")
+		out.WriteString(strings.Trim(p, "/"))
 	}
 
 	return out.String()

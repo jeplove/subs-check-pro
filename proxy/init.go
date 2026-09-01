@@ -20,20 +20,10 @@ func initEnvironment() {
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			slog.Error("创建 sub 目录失败", "error", err)
 		}
-		if err := migrateOldFiles(srcDir, "history.yaml", targetDir); err == nil {
-			os.Remove(filepath.Join(srcDir, "history.yaml"))
-		} else {
-			slog.Info("迁移出错", "error", err, "srcDir", srcDir, "targetDir", targetDir)
-		}
-		if err := migrateOldFiles(srcDir, "all.yaml", targetDir); err == nil {
-			os.Remove(filepath.Join(srcDir, "all.yaml"))
-		}
-		if err := migrateOldFiles(srcDir, "mihomo.yaml", targetDir); err == nil {
-			os.Remove(filepath.Join(srcDir, "mihomo.yaml"))
-		}
-		if err := migrateOldFiles(srcDir, "base64.txt", targetDir); err == nil {
-			os.Remove(filepath.Join(srcDir, "base64.txt"))
-		}
+		migrateAndRemove(srcDir, "history.yaml", targetDir)
+		migrateAndRemove(srcDir, "all.yaml", targetDir)
+		migrateAndRemove(srcDir, "mihomo.yaml", targetDir)
+		migrateAndRemove(srcDir, "base64.txt", targetDir)
 	}
 
 	slog.Info("获取系统代理和Github代理状态")
@@ -75,4 +65,15 @@ func migrateOldFiles(srcDir, fileName, targetDir string) error {
 		return fmt.Errorf("写入目标文件失败: %w", err)
 	}
 	return nil
+}
+
+// migrateAndRemove 尝试迁移旧文件到 targetDir，成功后删除源文件
+func migrateAndRemove(srcDir, fileName, targetDir string) {
+	if err := migrateOldFiles(srcDir, fileName, targetDir); err == nil {
+		if err := os.Remove(filepath.Join(srcDir, fileName)); err != nil && !os.IsNotExist(err) {
+			slog.Warn("删除旧文件失败", "file", fileName, "error", err)
+		}
+	} else {
+		slog.Info("迁移出错", "file", fileName, "error", err, "srcDir", srcDir, "targetDir", targetDir)
+	}
 }

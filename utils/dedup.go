@@ -80,25 +80,22 @@ func GenerateProxyKey(p map[string]any) string {
 	sb.WriteString(serverAddr)
 	sb.WriteByte('|')
 	if v, ok := p["port"]; ok {
-		sb.WriteString(fmt.Sprint(v))
+		fmt.Fprint(&sb, v)
 	}
+
 	sb.WriteByte('|')
 
 	// 身份凭证 (核心 ID)
-	foundCred := false
-	if writeStringWithPrefix(&sb, p, "uuid", "id:") {
-		foundCred = true
-	}
+	foundCred := writeStringWithPrefix(&sb, p, "uuid", "id:")
 	if !foundCred {
-		if writeStringWithPrefix(&sb, p, "password", "pw:") {
-			foundCred = true
-		}
+		foundCred = writeStringWithPrefix(&sb, p, "password", "pw:")
 	}
 	if !foundCred {
 		writeStringWithPrefix(&sb, p, "psk", "psk:")
 		writeStringWithPrefix(&sb, p, "token", "tok:")
 		writeStringWithPrefix(&sb, p, "username", "usr:")
 	}
+
 	writeStringWithPrefix(&sb, p, "auth-str", "auth:")
 	writeStringWithPrefix(&sb, p, "private-key", "pk:")
 	writeStringWithPrefix(&sb, p, "flow", "flow:") // XTLS Flow 必须区分

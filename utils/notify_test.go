@@ -52,5 +52,5 @@ func TestSendNotifyDetectLatestRelease(t *testing.T) {
 	withTestConfig()
 
 	// 验证函数能正常执行，不返回错误
-	SendNotifyDetectLatestRelease("v1.2.3", "2.0.0", false, true, "https://github.com/sinspired/subs-check-pro/v2/releases/download/v2.0.0/subs-check-pro_Windows_x86_64.zip")
+	SendNotifyDetectLatestRelease("v1.2.3", "2.0.0", false, true, "https://github.com/sinspired/subs-check-pro/releases/download/v2.0.0/subs-check-pro_Windows_x86_64.zip")
 }

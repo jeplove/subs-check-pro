@@ -33,7 +33,7 @@ const (
 	expireUnix int64 = 3389731200 // time.Date(2077,6,1,0,0,0,0,time.UTC).Unix()
 
 	planName = "Subs-Check-Pro"
-	appURL   = "https://github.com/sinspired/subs-check-pro/v2"
+	appURL   = "https://github.com/sinspired/subs-check-pro"
 )
 
 // registerSubscriptionInfoRoute 注册公共订阅信息路由（无需鉴权）。
@@ -324,10 +324,10 @@ func loadReportFallback() reportFallback {
 	// 只解析用到的字段，避免引入完整结构体
 	var doc struct {
 		CheckInfo struct {
-			CheckTrafficTotalRaw      uint64 `yaml:"check_traffic_total_raw"`
-			CheckTrafficUploadRaw      uint64 `yaml:"check_traffic_upload_raw"`
-			CheckTrafficDownloadRaw      uint64 `yaml:"check_traffic_download_raw"`
-			CheckEndTimeRaw string `yaml:"check_end_time_raw"`
+			CheckTrafficTotalRaw    uint64 `yaml:"check_traffic_total_raw"`
+			CheckTrafficUploadRaw   uint64 `yaml:"check_traffic_upload_raw"`
+			CheckTrafficDownloadRaw uint64 `yaml:"check_traffic_download_raw"`
+			CheckEndTimeRaw         string `yaml:"check_end_time_raw"`
 		} `yaml:"check_info"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -335,11 +335,11 @@ func loadReportFallback() reportFallback {
 	}
 
 	fb := reportFallback{
-		trafficTotalRaw: doc.CheckInfo.CheckTrafficTotalRaw,
-		trafficUploadRaw: doc.CheckInfo.CheckTrafficUploadRaw,
+		trafficTotalRaw:    doc.CheckInfo.CheckTrafficTotalRaw,
+		trafficUploadRaw:   doc.CheckInfo.CheckTrafficUploadRaw,
 		trafficDownloadRaw: doc.CheckInfo.CheckTrafficDownloadRaw,
 	}
-	
+
 	if raw := doc.CheckInfo.CheckEndTimeRaw; raw != "" {
 		// check_end_time_raw 为 RFC3339 格式：2026-03-17T02:18:17+08:00
 		if t, err := time.Parse(time.RFC3339, raw); err == nil {
