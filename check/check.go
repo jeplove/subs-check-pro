@@ -242,7 +242,7 @@ func Check() ([]Result, error) {
 
 	// 标记订阅获取阶段开始
 	Fetching.Store(true)
-	CurrentStepName.Store("获取订阅")
+	CurrentStepName.Store("解析远程列表")
 	// 获取订阅节点和之前成功的节点数量(已前置)
 	proxies, rawCount, subWasSuccedLength, historyLength, err := proxyutils.GetProxies(func(stepName string, done, total, available int) {
 		CurrentStepName.Store(stepName)

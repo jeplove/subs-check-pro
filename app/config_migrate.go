@@ -26,6 +26,8 @@ type migrateConfigView struct {
 	SubProcess struct {
 		ResolveDomain any `yaml:"resolve-domain"`
 	} `yaml:"sub-process"`
+
+	MihomoOverwriteURL string `yaml:"mihomo-overwrite-url"`
 }
 
 // singBoxConfigV1 仅用于重写 YAML 文本（json/js 统一为 []string）
@@ -110,6 +112,27 @@ func (app *App) migrateConfig() error {
 		// 已是新对象格式，跳过
 	default:
 		// 不存在或其他类型，跳过
+	}
+
+	// 迁移 mihomo-overwrite-url 文件名
+	if view.MihomoOverwriteURL != "" {
+		old := view.MihomoOverwriteURL
+
+		// 只替换文件名，不动前缀
+		new := old
+
+		if before, ok := strings.CutSuffix(old, "Sinspired_Rules_CDN.yaml"); ok {
+			new = before + "Mihomo-Rules-CDN.yaml"
+		} else if strings.HasSuffix(old, "Sinspired_Rules_Lite_CDN.yaml") {
+			new = strings.TrimSuffix(old, "Sinspired_Rules_Lite_CDN.yaml") + "Mihomo-Rules-Lite-CDN.yaml"
+		}
+
+		if new != old {
+			content = rewriteMihomoOverwriteURL(content, new)
+			needWrite = true
+			migrated = append(migrated, "mihomo-overwrite-url")
+			slog.Debug("mihomo-overwrite-url 已迁移为新规则文件名")
+		}
 	}
 
 	// 写回文件
@@ -292,6 +315,25 @@ func rewriteResolveDomain(content string, oldValue bool) string {
 			newLines = append(newLines, newBlock[1:]...)
 			newLines = append(newLines, lines[i+1:]...)
 			return strings.Join(newLines, "\n")
+		}
+	}
+
+	return content
+}
+
+// rewriteMihomoOverwriteURL 在原始 YAML 文本中替换 mihomo-overwrite-url 的值
+func rewriteMihomoOverwriteURL(content, newURL string) string {
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "mihomo-overwrite-url:") {
+
+			indent := len(line) - len(strings.TrimLeft(line, " \t"))
+			keyIndent := strings.Repeat(" ", indent)
+
+			lines[i] = keyIndent + "mihomo-overwrite-url: " + newURL
+			return strings.Join(lines, "\n")
 		}
 	}
 

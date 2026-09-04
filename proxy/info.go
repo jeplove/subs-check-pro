@@ -26,7 +26,7 @@ var ipAPIs = []string{
 	"https://cdid.c-ctrip.com/model-poc2/h",
 	"https://whois.pconline.com.cn/ipJson.jsp",
 	"https://api.live.bilibili.com/xlive/web-room/v1/index/getIpInfo",
-	"https://6.ipw.cn/",                  // IPv4使用了 CFCDN, IPv6 位置准确
+	// "https://6.ipw.cn/",                  // IPv4使用了 CFCDN, IPv6 位置准确
 	"https://api6.ipify.org?format=json", // IPv4使用了 CFCDN, IPv6 位置准确
 }
 
@@ -35,6 +35,7 @@ var geoAPIs = []string{
 	"https://ident.me/json",
 	"https://tnedi.me/json",
 	"https://api.seeip.org/geoip",
+	"https://checkip.info/json",
 }
 
 var ipAPIsMe = []string{}

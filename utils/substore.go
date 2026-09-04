@@ -581,7 +581,7 @@ func newDefaultSub(data []byte) sub {
 func newMihomoFile() file {
 	overwriteURL := config.GlobalConfig.MihomoOverwriteURL
 	if overwriteURL == "" {
-		overwriteURL = "http://127.0.0.1:8199/Sinspired_Rules_CDN.yaml"
+		overwriteURL = "http://127.0.0.1:8199/Mihomo-Rules-CDN.yaml"
 	}
 	return file{
 		Name:        MihomoName,

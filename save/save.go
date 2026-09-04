@@ -328,7 +328,7 @@ func mergeMihomoTemplate(templateData []byte, proxies []map[string]any) ([]byte,
 func fetchMihomoTemplate() ([]byte, error) {
 	source := strings.TrimSpace(config.GlobalConfig.MihomoOverwriteURL)
 	if source == "" {
-		source = "http://127.0.0.1:8199/Sinspired_Rules_CDN.yaml"
+		source = "http://127.0.0.1:8199/Mihomo-Rules-CDN.yaml"
 	}
 
 	if !strings.Contains(source, "://") {

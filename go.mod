@@ -23,8 +23,8 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.53.0
 	github.com/shirou/gopsutil/v4 v4.26.7
-	github.com/sinspired/checkip v0.5.1
-	github.com/sinspired/subs-check-pro-webui v1.2.1
+	github.com/sinspired/checkip v0.5.3
+	github.com/sinspired/subs-check-pro-webui v1.2.4
 	golang.org/x/net v0.58.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
@@ -180,7 +180,7 @@ require (
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
 	golang.org/x/arch v0.30.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect

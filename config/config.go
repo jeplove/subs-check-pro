@@ -193,7 +193,7 @@ type Config struct {
 var OriginDefaultConfig = &Config{
 	ListenPort:         ":8199",
 	NotifyTitle:        "🔔 节点状态更新",
-	MihomoOverwriteURL: "http://127.0.0.1:8199/Sinspired_Rules_CDN.yaml",
+	MihomoOverwriteURL: "http://127.0.0.1:8199/Mihomo-Rules-CDN.yaml",
 	Platforms: []string{
 		"iprisk",
 		"openai",

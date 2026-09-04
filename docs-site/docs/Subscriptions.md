@@ -85,3 +85,26 @@ singbox-old:
   js:
     - https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.11.x/sing-box.js
 ```
+
+## 🚀 shadowrocket 配置和规则
+
+提供小火箭分流配置
+
+### GitHub 仓库
+
+```bash
+https://raw.githubusercontent.com/sinspired/proxy-rules/main/shadowrocket-raw.conf
+```
+
+CDN 加速链接：
+
+```bash
+https://testingcf.jsdelivr.net/gh/sinspired/proxy-rules@main/shadowrocket-cdn.conf
+```
+
+### 本地访问
+
+```bash
+# 通用订阅
+http://localhost:{subs-check-pro管理端口}/Shadowrocket-Rules-CDN.conf
+```

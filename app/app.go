@@ -242,13 +242,7 @@ func (app *App) Run() {
 
 	app.setTimer()
 
-	if config.GlobalConfig.CronExpression != "" {
-		entries := app.cron.Entries()
-		if len(entries) > 0 {
-			nextTime := entries[0].Next
-			slog.Warn("激活 cron 检测任务", "time", nextTime.Format("2006-01-02 15:04:05"))
-		}
-	} else {
+	if config.GlobalConfig.CronExpression == "" {
 		app.triggerCheck()
 	}
 
@@ -316,6 +310,18 @@ func (app *App) setTimer() {
 			app.useIntervalTimer()
 		} else {
 			app.cron.Start()
+			for _, entry := range app.cron.Entries() {
+				if entry.Valid() && !entry.Next.IsZero() {
+					zoneName, offset := entry.Next.Zone()
+					slog.Warn("激活 cron 检测任务",
+						"next", fmt.Sprintf("%s %s UTC%+d",
+							entry.Next.In(app.cron.Location()).Format("2006-01-02 15:04:05"),
+							zoneName,
+							offset/3600,
+						),
+					)
+				}
+			}
 		}
 	} else {
 		// 使用间隔时间

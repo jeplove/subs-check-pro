@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -53,9 +54,10 @@ var publicStaticFileList = []struct {
 	Route string // HTTP 路由路径
 	File  string // 对应文件名
 }{
+	{"/Shadowrocket-Rules-CDN.conf", "Shadowrocket-Rules-CDN.conf"},
 	{"/ACL4SSR_Online_Full.yaml", "ACL4SSR_Online_Full.yaml"},
-	{"/Sinspired_Rules_CDN.yaml", "Sinspired_Rules_CDN.yaml"},
-	{"/Sinspired_Rules_Lite_CDN.yaml", "Sinspired_Rules_Lite_CDN.yaml"},
+	{"/Mihomo-Rules-CDN.yaml", "Mihomo-Rules-CDN.yaml"},
+	{"/Mihomo-Rules-Lite-CDN.yaml", "Mihomo-Rules-Lite-CDN.yaml"},
 	{"/bdg.yaml", "bdg.yaml"},
 }
 
@@ -312,6 +314,7 @@ func (app *App) registerAPIRoutes(router *gin.Engine) {
 		api.GET("/version", app.getVersion)
 		api.GET("/singbox-versions", app.getSingboxVersions)
 		api.GET("/logs", app.getLogs)
+		api.POST("/logs/clear", app.clearLogsHandler)
 		api.GET("/analysis-report", app.getAnalysisReport)
 		api.POST("/proxy/check", app.proxyCheckHandler)
 		api.POST("/notify/test", app.notifyTestHandler)
@@ -500,14 +503,43 @@ func (app *App) forceCloseHandler(c *gin.Context) {
 func (app *App) getLogs(c *gin.Context) {
 	logPath := TempLog()
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		c.JSON(http.StatusOK, gin.H{"logs": []string{}})
+		c.JSON(http.StatusOK, gin.H{"logs": []string{"[暂无日志文件]"}})
 		return
 	}
+
 	lines, err := ReadLastNLines(logPath, MaxLogLines)
+
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取日志失败" + err.Error()})
+		// 自动清理损坏日志
+		slog.Warn("日志文件损坏，自动清理", "path", logPath, "error", err)
+
+		// 删除损坏日志
+		_ = os.Remove(logPath)
+
+		// 自动重建空日志文件（避免前端报错）
+		_ = os.WriteFile(logPath, []byte{}, 0644)
+
+		// 有部分内容 → 提示放在最后
+		if len(lines) > 0 {
+			lines = append(lines,
+				fmt.Sprintf("[日志部分损坏，已自动清理: %v]", err),
+			)
+			c.JSON(http.StatusOK, gin.H{"logs": lines})
+			return
+		}
+
+		// 完全不可读
+		c.JSON(http.StatusOK, gin.H{"logs": []string{
+			fmt.Sprintf("[日志文件损坏，已自动清理: %v]", err),
+		}})
 		return
 	}
+
+	if len(lines) == 0 {
+		c.JSON(http.StatusOK, gin.H{"logs": []string{"[日志为空]"}})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"logs": lines})
 }
 
@@ -571,27 +603,51 @@ func ReadLastNLines(filePath string, n int) ([]string, error) {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	reader := bufio.NewReader(file)
+
+	const maxLineSize = 64 * 1024 // 64KB
 	ring := make([]string, n)
 	count := 0
+	var scanErr error
 
-	for scanner.Scan() {
-		ring[count%n] = scanner.Text()
-		count++
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	for {
+		line, err := reader.ReadString('\n')
+
+		if len(line) > maxLineSize {
+			// 超长行：跳过，不加入 ring
+			scanErr = fmt.Errorf("bufio.Scanner: token too long")
+			// 丢弃这一行剩余部分（如果没有换行）
+			for err == nil && !strings.HasSuffix(line, "\n") {
+				line, err = reader.ReadString('\n')
+			}
+			continue
+		}
+
+		if len(line) > 0 {
+			ring[count%n] = strings.TrimRight(line, "\n")
+			count++
+		}
+
+		if err != nil {
+			if err != io.EOF {
+				scanErr = err
+			}
+			break
+		}
 	}
 
+	// 整理结果
+	var result []string
 	if count <= n {
-		return ring[:count], nil
+		result = ring[:count]
+	} else {
+		result = make([]string, n)
+		start := count % n
+		copy(result, ring[start:])
+		copy(result[n-start:], ring[:start])
 	}
 
-	result := make([]string, n)
-	start := count % n
-	copy(result, ring[start:])
-	copy(result[n-start:], ring[:start])
-	return result, nil
+	return result, scanErr
 }
 
 func loadHistoricalCheckRate() {
@@ -681,4 +737,24 @@ func (app *App) notifyTestHandler(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": allOK, "results": results})
+}
+
+func (app *App) clearLogsHandler(c *gin.Context) {
+	logPath := TempLog()
+
+	// 清空日志内容
+	if err := os.Truncate(logPath, 0); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "清理失败：" + err.Error(),
+		})
+		return
+	}
+
+	// 截断文件后，立刻写入一条新的警告日志
+	// 这样不仅在控制台有提示，前端也能立刻拉取到这一句作为“空状态”的占位
+	slog.Warn("日志内容已清空")
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "日志文件已清空",
+	})
 }

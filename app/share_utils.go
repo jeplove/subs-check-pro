@@ -257,8 +257,9 @@ func (app *App) handleFileShare(basePath string, _ bool) gin.HandlerFunc {
 // 根据 share-password 是否配置动态控制加密分享入口的状态
 func (app *App) handleFilesIndex(c *gin.Context) {
 	type StaticFileEntry struct {
-		Route string
-		Name  string
+		Route    string
+		Name     string
+		IconName string
 	}
 
 	saver, err := method.NewLocalSaver()
@@ -272,7 +273,17 @@ func (app *App) handleFilesIndex(c *gin.Context) {
 	for _, f := range publicStaticFileList {
 		absPath := filepath.Join(saver.OutputPath, f.File)
 		if _, err := os.Stat(absPath); err == nil {
-			entries = append(entries, StaticFileEntry{Route: f.Route, Name: f.File})
+			// 根据文件名判断分配的图标（假定扩展名均为 .svg）
+			iconName := "mihomo.svg"
+			if strings.Contains(f.File, "Shadowrocket") {
+				iconName = "shadowrocket.svg"
+			}
+
+			entries = append(entries, StaticFileEntry{
+				Route:    f.Route,
+				Name:     f.File,
+				IconName: iconName,
+			})
 		}
 	}
 

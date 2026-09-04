@@ -36,6 +36,7 @@ type subStorePaths struct {
 	frontDir                          string
 	subsCheckProLogoPath              string
 	singBoxLogoPath                   string
+	shadowrocketConfigPath            string
 	overYamlACL4SSRPath               string
 	overYamlSinspiredRulesCDNPath     string
 	overYamlSinspiredRulesLiteCDNPath string
@@ -73,9 +74,10 @@ func getSubStorePaths() (*subStorePaths, error) {
 		nodePath:                          filepath.Join(substoreDir, nodeName),
 		jsPath:                            filepath.Join(substoreDir, "sub-store.bundle.js"),
 		frontDir:                          filepath.Join(substoreDir, "frontend"),
+		shadowrocketConfigPath:            filepath.Join(saver.OutputPath, "Shadowrocket-Rules-CDN.conf"),
 		overYamlACL4SSRPath:               filepath.Join(saver.OutputPath, "ACL4SSR_Online_Full.yaml"),
-		overYamlSinspiredRulesCDNPath:     filepath.Join(saver.OutputPath, "Sinspired_Rules_CDN.yaml"),
-		overYamlSinspiredRulesLiteCDNPath: filepath.Join(saver.OutputPath, "Sinspired_Rules_Lite_CDN.yaml"),
+		overYamlSinspiredRulesCDNPath:     filepath.Join(saver.OutputPath, "Mihomo-Rules-CDN.yaml"),
+		overYamlSinspiredRulesLiteCDNPath: filepath.Join(saver.OutputPath, "Mihomo-Rules-Lite-CDN.yaml"),
 		logPath:                           filepath.Join(substoreDir, "sub-store.log"),
 		subsCheckProLogoPath:              filepath.Join(substoreSCPDir, "subs-check-pro.svg"),
 		singBoxLogoPath:                   filepath.Join(substoreSCPDir, "sing-box.svg"),
@@ -188,6 +190,9 @@ func startSubStore(ctx context.Context) error {
 		slog.Error("迁移sub-store配置失败")
 	}
 
+	// 移除旧规则文件
+	removeOldSinspiredFiles()
+
 	// 在函数结束前确保尝试杀掉 node
 	defer killNodeProcess(paths.nodePath)
 
@@ -286,6 +291,7 @@ func clearOldFiles(paths *subStorePaths) {
 		paths.jsPath,
 		paths.subsCheckProLogoPath,
 		paths.singBoxLogoPath,
+		paths.shadowrocketConfigPath,
 		paths.overYamlACL4SSRPath,
 		paths.overYamlSinspiredRulesCDNPath,
 		paths.overYamlSinspiredRulesLiteCDNPath,
@@ -502,6 +508,7 @@ func extractAssets(paths *subStorePaths) error {
 		{EmbeddedSubStoreBackend, paths.jsPath, "sub-store 核心脚本"},
 		{EmbeddedSubsCheckProLogo, paths.subsCheckProLogoPath, "subs-check-pro svg logo"},
 		{EmbeddedSingBoxLogo, paths.singBoxLogoPath, "sing-box svg logo"},
+		{EmbeddedShadowrocketConfig, paths.shadowrocketConfigPath, "Shadowrocket 配置文件"},
 		{EmbeddedOverrideYamlACL4SSR, paths.overYamlACL4SSRPath, "ACL4SSR 配置文件"},
 		{EmbeddedOverrideYamlSinspiredRulesCDN, paths.overYamlSinspiredRulesCDNPath, "Sinspired CDN 配置"},
 		{EmbeddedOverrideYamlSinspiredRulesLiteCDN, paths.overYamlSinspiredRulesLiteCDNPath, "Sinspired Lite CDN 配置"},
@@ -585,4 +592,33 @@ func KillNode() error {
 	IsSubStoreRunning.Store(false)
 	slog.Debug("Sub-store service killed", "pid", pid)
 	return nil
+}
+
+// removeOldSinspiredFiles 移除旧的 Sinspired_Rules_* 规则文件
+func removeOldSinspiredFiles() {
+	saver, err := method.NewLocalSaver()
+	if err == nil {
+		srcDir := saver.OutputPath
+
+		oldFiles := []string{
+			"Sinspired_Rules_CDN.yaml",
+			"Sinspired_Rules_Lite_CDN.yaml",
+			"Sinspired_Rules_shadowrocket-cdn.conf",
+		}
+
+		for _, f := range oldFiles {
+			path := filepath.Join(srcDir, f)
+			if _, err := os.Stat(path); err == nil {
+				// 文件存在才尝试删除
+				if err := os.Remove(path); err != nil {
+					slog.Warn("移除旧规则文件失败", "file", f, "error", err)
+				} else {
+					slog.Info("已移除旧规则文件", "file", f)
+				}
+			} else if !os.IsNotExist(err) {
+				// 其他错误（例如权限问题）
+				slog.Warn("检查旧规则文件失败", "file", f, "error", err)
+			}
+		}
+	}
 }
