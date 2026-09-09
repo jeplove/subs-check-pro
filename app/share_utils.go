@@ -279,9 +279,15 @@ func (app *App) handleFilesIndex(c *gin.Context) {
 				iconName = "shadowrocket.svg"
 			}
 
+			filename := f.File
+			ext := filepath.Ext(filename)                       // 获取扩展名，例如 ".svg"
+			nameWithoutExt := strings.TrimSuffix(filename, ext) // 去掉扩展名
+			nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "-CDN")
+			nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "-RAW")
+
 			entries = append(entries, StaticFileEntry{
 				Route:    f.Route,
-				Name:     f.File,
+				Name:     nameWithoutExt,
 				IconName: iconName,
 			})
 		}

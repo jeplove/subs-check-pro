@@ -17,16 +17,17 @@ import (
 
 // StatusData 包含当前检测的所有状态信息
 type StatusData struct {
-	IsChecking    bool
-	StepName      string
-	ProxyCount    int64
-	Processed     int64
-	Available     int64
-	Progress      int64
-	ETASuffix     string
-	LastCheckTime string
-	LastTotal     int64
-	LastAvailable int64
+	IsChecking     bool
+	StepName       string
+	ProxyCount     int64
+	Processed      int64
+	Available      int64
+	Progress       int64
+	ETASuffix      string
+	LastCheckTime  string
+	LastTotal      int64
+	LastAvailable  int64
+	ProcessResults bool
 }
 
 // GetCurrentState 提取状态逻辑，供 API 和 GUI 共同调用
@@ -51,13 +52,14 @@ func (app *App) GetCurrentState() StatusData {
 
 	// 2. 将 uint32 强转为 int64
 	data := StatusData{
-		IsChecking: app.checking.Load(),
-		StepName:   stepName,
-		ProxyCount: int64(check.ProxyCount.Load()),
-		Processed:  int64(check.Processed.Load()),
-		Available:  int64(check.Available.Load()),
-		Progress:   int64(check.Progress.Load()),
-		ETASuffix:  etaSuffix,
+		IsChecking:     app.checking.Load(),
+		StepName:       stepName,
+		ProxyCount:     int64(check.ProxyCount.Load()),
+		Processed:      int64(check.Processed.Load()),
+		Available:      int64(check.Available.Load()),
+		Progress:       int64(check.Progress.Load()),
+		ETASuffix:      etaSuffix,
+		ProcessResults: check.ProcessResults.Load(),
 	}
 
 	if t, ok := app.lastCheck.time.Load().(time.Time); ok && !t.IsZero() {

@@ -273,26 +273,35 @@ func Check() ([]Result, error) {
 	}
 
 	CurrentStepName.Store("节点乱序")
-	// 设置之前成功的节点顺序在前
-	headSize := subWasSuccedLength
-	if len(proxies) > headSize {
-		// 假设有 15 个相似的 IP/域名
-		calcMinSpacing := max(config.GlobalConfig.Concurrent*5, len(proxies)/15)
 
-		// 随机乱序并根据 IP/域名/真实Host 打乱节点顺序, 减少测速直接测死的概率
-		cfg := proxyutils.ShuffleConfig{
-			Threshold:  float64(config.GlobalConfig.Threshold),
-			Passes:     3,
-			MinSpacing: calcMinSpacing,
-			ScanLimit:  config.GlobalConfig.Concurrent * 2,
-		}
+	// 假设有 15 个相似的 IP/域名
+	calcMinSpacing := max(config.GlobalConfig.Concurrent*5, len(proxies)/15)
 
+	// 随机乱序并根据 IP/域名/真实Host 打乱节点顺序, 减少测速直接测死的概率
+	cfg := proxyutils.ShuffleConfig{
+		Threshold:  float64(config.GlobalConfig.Threshold),
+		Passes:     3,
+		MinSpacing: calcMinSpacing,
+		ScanLimit:  config.GlobalConfig.Concurrent * 2,
+	}
+
+	// 获取动态映射的 CIDR 和 域名层级 文本
+	cidr, domainLevel := proxyutils.ThresholdToLevel(cfg.Threshold)
+
+	headSize := 0
+	if subWasSuccedLength < 10 {
+		// 设置之前成功的节点顺序在前
+		headSize = subWasSuccedLength
+	}
+
+	if len(proxies) > headSize && headSize > 0 {
 		tail := proxies[headSize:]
 		proxyutils.SmartShuffleByServer(tail, cfg)
-
-		// 获取动态映射的 CIDR 和 域名层级 文本
-		cidr, domainLevel := proxyutils.ThresholdToLevel(cfg.Threshold)
-
+		// 动态输出到终端日志
+		slog.Info(fmt.Sprintf("节点乱序, 相同 CIDR %s 或 %s 最小间距: %d", cidr, domainLevel, cfg.MinSpacing))
+		slog.Info("上次成功节点未乱序", "count", headSize)
+	} else {
+		proxyutils.SmartShuffleByServer(proxies, cfg)
 		// 动态输出到终端日志
 		slog.Info(fmt.Sprintf("节点乱序, 相同 CIDR %s 或 %s 最小间距: %d", cidr, domainLevel, cfg.MinSpacing))
 	}
