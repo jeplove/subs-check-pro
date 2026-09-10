@@ -97,24 +97,26 @@ func detectSuccessNotify(currentVersion string, latest *selfupdate.Release) {
 	if needNotify {
 		fmt.Println("\033[32m🔎 详情查看: https://github.com/sinspired/subs-check-pro")
 
-		var downloadURL string
+		var updateHint string
 		switch {
 		case isDockerEnv:
-			downloadURL = "ghcr.io/sinspired/subs-check-pro:" + latest.Version()
+			updateHint = fmt.Sprintf("docker pull sinspired/subs-check-pro:%s", latest.Version())
+
 		case isGUI:
-			downloadURL = "GUI内核: " + latest.AssetURL
+			updateHint = "GUI内核: " + latest.AssetURL
+
 		default:
-			downloadURL = latest.AssetURL
+			updateHint = latest.AssetURL
 		}
 
-		fmt.Println("🔗 手动更新:", downloadURL, "\033[0m")
+		fmt.Println("🔗 手动更新:", updateHint, "\033[0m")
 
 		// 发送更新成功通知
 		utils.SendNotifyDetectLatestRelease(
 			currentVersion,
 			latest.Version(),
 			isDockerEnv, isGUI,
-			downloadURL,
+			updateHint,
 		)
 	}
 }
