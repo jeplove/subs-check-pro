@@ -121,16 +121,18 @@ type Config struct {
 	OutputDir          string   `yaml:"output-dir"`
 	// ConfigDir 运行时由 app.loadConfig 注入，值为当前配置文件所在目录。
 	// 不参与 YAML 序列化，仅供 save/method/local.go 计算默认输出路径使用。
-	ConfigDir           string   `yaml:"-"`
-	AppriseAPIServer    string   `yaml:"apprise-api-server"`
-	RecipientURL        []string `yaml:"recipient-url"`
-	NotifyTitle         string   `yaml:"notify-title"`
-	SubStorePort        string   `yaml:"sub-store-port"`
-	SubStorePath        string   `yaml:"sub-store-path"`
-	SubStoreSyncCron    string   `yaml:"sub-store-sync-cron"`
-	SubStorePushService string   `yaml:"sub-store-push-service"`
-	SubStoreProduceCron string   `yaml:"sub-store-produce-cron"`
-	MihomoOverwriteURL  string   `yaml:"mihomo-overwrite-url"`
+	ConfigDir            string   `yaml:"-"`
+	AppriseAPIServer     string   `yaml:"apprise-api-server"`
+	RecipientURL         []string `yaml:"recipient-url"`
+	NotifyTitle          string   `yaml:"notify-title"`
+	SubStoreUpdateCron   string   `yaml:"sub-store-update-cron"`
+	SubStoreUpdateNotify bool     `yaml:"sub-store-update-notify"`
+	SubStorePort         string   `yaml:"sub-store-port"`
+	SubStorePath         string   `yaml:"sub-store-path"`
+	SubStoreSyncCron     string   `yaml:"sub-store-sync-cron"`
+	SubStorePushService  string   `yaml:"sub-store-push-service"`
+	SubStoreProduceCron  string   `yaml:"sub-store-produce-cron"`
+	MihomoOverwriteURL   string   `yaml:"mihomo-overwrite-url"`
 
 	// ISPCheck 是否开启出口 ISP 类型检测（机房/住宅/移动/商宽/教育/政府/银行等）
 	ISPCheck bool `yaml:"isp-check"`
@@ -158,27 +160,28 @@ type Config struct {
 	// 免费额度：每天 1500 次（或每月 45000 次）
 	ISPCheckAPIKeyIPData string `yaml:"isp-check-api-key-ipdata"`
 
-	MediaCheck       bool     `yaml:"media-check"`
-	Platforms        []string `yaml:"platforms"`
-	MaxMindDBPath    string   `yaml:"maxmind-db-path"`
-	DropBadCfNodes   bool     `yaml:"drop-bad-cf-nodes"`
-	EnhancedTag      bool     `yaml:"enhanced-tag"`
-	SuccessLimit     int32    `yaml:"success-limit"`
-	NodePrefix       string   `yaml:"node-prefix"`
-	NodeType         []string `yaml:"node-type"`
-	NodeLoc          []string `yaml:"node-loc"`
-	EnableWebUI      bool     `yaml:"enable-web-ui"`
-	APIKey           string   `yaml:"api-key"`
-	SharePassword    string   `yaml:"share-password"`
-	CallbackScript   string   `yaml:"callback-script"`
-	SystemProxy      string   `yaml:"system-proxy"`
-	GithubProxy      string   `yaml:"github-proxy"`
-	GithubProxyGroup []string `yaml:"ghproxy-group"`
-	EnableSelfUpdate bool     `yaml:"update"`
-	UpdateOnStartup  bool     `yaml:"update-on-startup"`
-	CronCheckUpdate  string   `yaml:"cron-check-update"`
-	Prerelease       bool     `yaml:"prerelease"`
-	UpdateTimeout    int      `yaml:"update-timeout"`
+	MediaCheck            bool     `yaml:"media-check"`
+	Platforms             []string `yaml:"platforms"`
+	MaxMindDBUpdateNotify bool     `yaml:"maxmind-db-update-notify"`
+	MaxMindDBPath         string   `yaml:"maxmind-db-path"`
+	DropBadCfNodes        bool     `yaml:"drop-bad-cf-nodes"`
+	EnhancedTag           bool     `yaml:"enhanced-tag"`
+	SuccessLimit          int32    `yaml:"success-limit"`
+	NodePrefix            string   `yaml:"node-prefix"`
+	NodeType              []string `yaml:"node-type"`
+	NodeLoc               []string `yaml:"node-loc"`
+	EnableWebUI           bool     `yaml:"enable-web-ui"`
+	APIKey                string   `yaml:"api-key"`
+	SharePassword         string   `yaml:"share-password"`
+	CallbackScript        string   `yaml:"callback-script"`
+	SystemProxy           string   `yaml:"system-proxy"`
+	GithubProxy           string   `yaml:"github-proxy"`
+	GithubProxyGroup      []string `yaml:"ghproxy-group"`
+	EnableSelfUpdate      bool     `yaml:"update"`
+	UpdateOnStartup       bool     `yaml:"update-on-startup"`
+	CronCheckUpdate       string   `yaml:"cron-check-update"`
+	Prerelease            bool     `yaml:"prerelease"`
+	UpdateTimeout         int      `yaml:"update-timeout"`
 
 	// Singbox 支持最新版和 iOS 兼容版
 	SingboxLatest SingBoxConfig `yaml:"singbox-latest"`
@@ -212,6 +215,12 @@ var OriginDefaultConfig = &Config{
 
 	// 10 万原始节点触发一次；百万量级约 10 次 GC，CPU 开销可忽略
 	SubsDedupeBatch: 100000,
+
+	// Sub-Store 资源默认每周五更新
+	SubStoreUpdateCron: "14 13 * * 5",
+
+	// 默认开启 Sub-Store 更新通知
+	SubStoreUpdateNotify: true,
 
 	SubProcess: SubProcessConfig{
 		ResolveDomain: ResolveDomainConfig{

@@ -32,10 +32,11 @@ type NotifyTestResult struct {
 }
 
 const (
-	NotifyNodeStatus  NotifyKind = iota // 节点状态
-	NotifyGeoDBUpdate                   // GeoDB 更新
-	NotifySelfUpdate                    // 程序自更新
-	NotifyNewRelease                    // 新版本通知
+	NotifyNodeStatus           NotifyKind = iota // 节点状态
+	NotifyGeoDBUpdate                            // GeoDB 更新
+	NotifySubStoreAssetsUpdate                   // Sub-Store 资源更新
+	NotifySelfUpdate                             // 程序自更新
+	NotifyNewRelease                             // 新版本通知
 )
 
 const (
@@ -74,8 +75,14 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 		return raw
 	}
 
-	scheme := strings.ToLower(parts[0]) // 获取协议头，转小写以便 switch 匹配
-	rest := parts[1]                    // 剩余部分 (包含 host, path, query)
+	// 处理 Apprise 的标签前缀 (例如 "1:alerts=bark" -> 提取出 "bark")
+	schemePart := parts[0]
+	if eqIdx := strings.LastIndex(schemePart, "="); eqIdx != -1 {
+		schemePart = schemePart[eqIdx+1:]
+	}
+	scheme := strings.ToLower(schemePart)
+
+	rest := parts[1] // 剩余部分 (包含 host, path, query)
 
 	var body, queryStr string
 
@@ -107,16 +114,19 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 		switch kind {
 		case NotifyNewRelease:
 			q.Set("click", RepoURL)
-			q.Set("group", "release")
+			q.Set("group", "scp-release")
 			q.Set("category", "新版本通知")
 		case NotifyNodeStatus:
-			q.Set("group", "node")
+			q.Set("group", "scp-node")
 			q.Set("category", "节点状态更新")
 		case NotifyGeoDBUpdate:
-			q.Set("group", "geodb")
+			q.Set("group", "scp-geodb")
 			q.Set("category", "数据库更新")
+		case NotifySubStoreAssetsUpdate:
+			q.Set("group", "scp-sub-store")
+			q.Set("category", "Sub-Store资源更新")
 		case NotifySelfUpdate:
-			q.Set("group", "selfupdate")
+			q.Set("group", "scp-selfupdate")
 			q.Set("category", "程序更新")
 		}
 	case "ntfy":
@@ -133,6 +143,8 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 			q.Set("tags", "subs-check-pro,node-status")
 		case NotifyGeoDBUpdate:
 			q.Set("tags", "subs-check-pro,geodb-update")
+		case NotifySubStoreAssetsUpdate:
+			q.Set("tags", "subs-check-pro,sub-store-update")
 		case NotifySelfUpdate:
 			q.Set("tags", "subs-check-pro,self-update")
 		}
@@ -146,6 +158,12 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 			q.Set("footer", "新版本通知")
 		case NotifyNodeStatus:
 			q.Set("footer", "节点状态更新")
+		case NotifyGeoDBUpdate:
+			q.Set("footer", "Subs-Check-Pro 资源更新")
+		case NotifySelfUpdate:
+			q.Set("footer", "Subs-Check-Pro 主体更新")
+		case NotifySubStoreAssetsUpdate:
+			q.Set("footer", "Subs-Check-Pro 资源更新")
 		}
 	case "mailto", "mailtos":
 		q.Set("from", "Subs-Check-PRO")
@@ -157,7 +175,8 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 	if newQuery == "" {
 		return parts[0] + "://" + body
 	}
-	return parts[0] + "://" + body + "?" + newQuery
+
+	return schemePart + "://" + body + "?" + newQuery
 }
 
 // getClient 按 proxyURL 返回已缓存的 HTTP/2 客户端，不存在则创建并缓存
@@ -361,10 +380,36 @@ func SendNotifyCheckResult(length int, checkTrafficTotal string) {
 	broadcastNotify(NotifyNodeStatus, title, body, "")
 }
 
+// SendNotifySubStoreAssets 发送 Sub-Store 更新通知
+func SendNotifySubStoreAssets(frontendUpdated bool, frontendVer string, backendUpdated bool, backendVer string) {
+	// 如果都没有更新，则直接返回，不发送通知
+	if !frontendUpdated && !backendUpdated {
+		return
+	}
+
+	title := "🧩 Subs-Check-Pro 资源更新"
+	var lines []string
+
+	// 动态拼接消息体，使用语义化 Emoji 替代重复的 ✅
+	if frontendUpdated {
+		lines = append(lines, "🌐 Sub-Store 前端："+frontendVer)
+	}
+	if backendUpdated {
+		lines = append(lines, "⚙️ Sub-Store 后端："+backendVer)
+	}
+
+	lines = append(lines, "🕒 "+GetCurrentTime())
+
+	body := strings.Join(lines, "  \n")
+
+	// 发送通知
+	broadcastNotify(NotifySubStoreAssetsUpdate, title, body, "")
+}
+
 // SendNotifyGeoDBUpdate 发送 GeoDB 更新通知
 func SendNotifyGeoDBUpdate(version string) {
-	title := "🔔 MaxMind GeoDB 更新"
-	body := "✅ 已更新到：" + version +
+	title := "🧩 Subs-Check-Pro 资源更新"
+	body := "🌍 MMDB 数据库：" + version +
 		"  \n🕒 " + GetCurrentTime()
 
 	broadcastNotify(NotifyGeoDBUpdate, title, body, "")
@@ -372,7 +417,7 @@ func SendNotifyGeoDBUpdate(version string) {
 
 // SendNotifySelfUpdate 发送程序自更新通知
 func SendNotifySelfUpdate(current, latest string) {
-	title := "🔔 subs-check-pro 自动更新"
+	title := "📦 Subs-Check-Pro 自动更新"
 	body := "✅ " + current + " -> " + latest +
 		"  \n🕒 " + GetCurrentTime()
 
@@ -381,7 +426,7 @@ func SendNotifySelfUpdate(current, latest string) {
 
 // SendNotifyDetectLatestRelease 发送新版本通知
 func SendNotifyDetectLatestRelease(current, latest string, isDocker, isGUI bool, downloadURL string) {
-	title := "📦 subs-check-pro 有新版本"
+	title := "📦 Subs-Check-Pro 有新版本"
 	var body string
 
 	switch {
@@ -407,7 +452,7 @@ func SendNotifyDetectLatestRelease(current, latest string, isDocker, isGUI bool,
 
 // SendNotifyTestTo 向指定渠道列表发送测试通知
 func SendNotifyTestTo(recipients []string) []NotifyTestResult {
-	title := "🎉 Subs Check PRO 通知测试"
+	title := "🎉 Subs-Check-Pro 通知测试"
 	body := "✅ 通知渠道配置正确！恭喜！\n🔗 可查看 [Apprise_Vercel](https://github.com/sinspired/apprise_vercel) 部署自己的通知服务  \n🕒 " + GetCurrentTime()
 	proxies := buildProxyList()
 

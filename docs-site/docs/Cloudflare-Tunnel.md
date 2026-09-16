@@ -51,8 +51,8 @@
 
 | 外网访问地址                              | 本地服务地址     | 用途说明        |
 | ----------------------------------------- | ---------------- | --------------- |
-| `scp-store.你的域名.com/{sub-store-path}` | `localhost:8299` | ❗sub-store 路径 |
-| `scp-store.你的域名.com/share`            | `localhost:8299` | ❗sub-store 分享 |
+| `scp-store.你的域名.com/{sub-store-path}` | `localhost:8299` | ❗Sub-Store 路径 |
+| `scp-store.你的域名.com/share`            | `localhost:8299` | ❗Sub-Store 分享 |
 
 ## 🎉 使用方法
 

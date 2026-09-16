@@ -86,8 +86,11 @@ func UploadToGist(yamlData []byte, filename string) error {
 
 // ValiGistConfig 验证Gist配置
 func ValiGistConfig() error {
-	if config.GlobalConfig.GithubToken == "" {
-		return fmt.Errorf("github token未配置")
+	token := config.GlobalConfig.GithubToken
+	hasValidToken := utils.IsValidGitHubToken(token)
+
+	if !hasValidToken {
+		return fmt.Errorf("github token 未配置或格式错误")
 	}
 	if config.GlobalConfig.GithubGistID == "" {
 		return fmt.Errorf("gist id未配置")

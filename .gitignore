@@ -14,7 +14,6 @@ mihomo-check*
 
 .DS_Store
 
-*.ps1
 *.bak
 *.zip
 *.gz

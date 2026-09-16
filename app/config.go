@@ -237,6 +237,7 @@ func (app *App) onConfigChange() {
 
 	oldUpdateSwitcher := config.GlobalConfig.EnableSelfUpdate
 	oldCronCheckUpdateExpr := config.GlobalConfig.CronCheckUpdate
+	oldSubStoreUpdateCron := config.GlobalConfig.SubStoreUpdateCron
 	oldSubStorePath := config.GlobalConfig.SubStorePath
 	oldSubStorePort := config.GlobalConfig.SubStorePort
 
@@ -265,7 +266,7 @@ func (app *App) onConfigChange() {
 		} else {
 			if initAPIKey != "" {
 				config.GlobalConfig.APIKey = utils.GenerateRandomString(10)
-				slog.Warn("未设置api-key，key，已随机生成", "api-key", config.GlobalConfig.APIKey)
+				slog.Warn("未设置api-key，已随机生成", "api-key", config.GlobalConfig.APIKey)
 			} else {
 				config.GlobalConfig.APIKey = geneAPIKey
 				slog.Debug("保留首次运行自动生成的API key", "api-key", config.GlobalConfig.APIKey)
@@ -285,12 +286,12 @@ func (app *App) onConfigChange() {
 			}
 			app.ctx, app.cancel = context.WithCancel(context.Background())
 		}
-		assets.RunSubStoreService(app.ctx)
+		go assets.RunSubStoreService(app.ctx)
 
 	case oldSubStorePort == "" && config.GlobalConfig.SubStorePort != "":
 		// 首次配置端口 → 启动
 		slog.Debug("启动 sub-store")
-		assets.RunSubStoreService(app.ctx)
+		go assets.RunSubStoreService(app.ctx)
 
 	case oldSubStorePort != "" && config.GlobalConfig.SubStorePort == "":
 		// 端口被清空 → 停止
@@ -316,7 +317,7 @@ func (app *App) onConfigChange() {
 					app.cancel()
 					app.ctx, app.cancel = context.WithCancel(context.Background())
 				}
-				assets.RunSubStoreService(app.ctx)
+				go assets.RunSubStoreService(app.ctx)
 			}
 		} else {
 			if assets.InitSubStorePath != "" {
@@ -328,7 +329,7 @@ func (app *App) onConfigChange() {
 					app.cancel()
 					app.ctx, app.cancel = context.WithCancel(context.Background())
 				}
-				assets.RunSubStoreService(app.ctx)
+				go assets.RunSubStoreService(app.ctx)
 			} else {
 				config.GlobalConfig.SubStorePath = oldSubStorePath
 				slog.Debug("保留首次运行自动生成的sub-store路径", "sub-store-path", config.GlobalConfig.SubStorePath)
@@ -340,13 +341,11 @@ func (app *App) onConfigChange() {
 			app.cancel()
 			app.ctx, app.cancel = context.WithCancel(context.Background())
 		}
-		assets.RunSubStoreService(app.ctx)
+		go assets.RunSubStoreService(app.ctx)
 	}
 
-	// 检查cron表达式或检测间隔是否变化
-	if oldCronExpr != config.GlobalConfig.CronExpression ||
-		oldInterval != config.GlobalConfig.CheckInterval {
-
+	// 检查测活/测速调度（主测速流程调度）是否发生变化
+	if oldCronExpr != config.GlobalConfig.CronExpression || oldInterval != config.GlobalConfig.CheckInterval {
 		app.interval = func() int {
 			if config.GlobalConfig.CheckInterval <= 0 {
 				return 2880
@@ -356,12 +355,19 @@ func (app *App) onConfigChange() {
 			}
 			return config.GlobalConfig.CheckInterval
 		}()
-		slog.Warn("检测设置发生变化，重新配置定时器")
+		slog.Warn("检测任务调度设置发生变化，正在重新配置定时器")
 		app.setTimer()
 	}
 
+	// 检查后台 主程序 更新任务是否发生变化
 	if oldCronCheckUpdateExpr != config.GlobalConfig.CronCheckUpdate || oldUpdateSwitcher != config.GlobalConfig.EnableSelfUpdate {
-		slog.Warn("版本更新设置发生变化，重新设置定时更新任务")
-		app.SetupUpdateTasks()
+		slog.Warn("版本更新设置变化，重新配置主程序定时更新任务")
+		app.UpdateSelfUpdateCron()
+	}
+
+	// 检查后台 Sub-Store 资源更新任务是否发生变化
+	if oldSubStoreUpdateCron != config.GlobalConfig.SubStoreUpdateCron {
+		slog.Warn("Sub-Store 资源更新设置变化，重新配置 Sub-Store 定时更新任务")
+		app.UpdateSubStoreCron()
 	}
 }

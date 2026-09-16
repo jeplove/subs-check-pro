@@ -3,6 +3,7 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"html/template"
@@ -17,6 +18,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,8 +66,12 @@ var publicStaticFileList = []struct {
 var (
 	initAPIKey string
 	geneAPIKey string
-	// 标记 SubStore 是否正在后台更新
-	subStoreSyncing atomic.Bool
+
+	subStoreSyncing  atomic.Bool // 标记 SubStore 是否正在后台同步
+	subStoreUpdating atomic.Bool // 标记 SubStore 是否正在后台更新
+
+	subStoreUpdateMsg string
+	subStoreUpdateMu  sync.RWMutex
 )
 
 func init() {
@@ -318,6 +324,7 @@ func (app *App) registerAPIRoutes(router *gin.Engine) {
 		api.GET("/analysis-report", app.getAnalysisReport)
 		api.POST("/proxy/check", app.proxyCheckHandler)
 		api.POST("/notify/test", app.notifyTestHandler)
+		api.POST("/substore/update", app.updateSubStoreHandler)
 	}
 }
 
@@ -405,11 +412,22 @@ func (app *App) updateConfig(c *gin.Context) {
 		return
 	}
 
-	hasSubStoreUpdate := doSub || doMihomo || doLatest || doOld
-	needGetGhProxy := doMihomo || doLatest || doOld
+	isAllLocal := func(urls ...string) bool {
+		for _, u := range urls {
+			if !utils.IsLocalURL(u) {
+				return false
+			}
+		}
+		return true
+	}
+
+	hasSubStoreSync := doSub || doMihomo || doLatest || doOld
+	needGetGhProxy := (doMihomo && !isAllLocal(newConfig.MihomoOverwriteURL)) ||
+		(doLatest && !isAllLocal(newConfig.SingboxLatest.JS, newConfig.SingboxLatest.JSON)) ||
+		(doOld && !isAllLocal(newConfig.SingboxOld.JS, newConfig.SingboxOld.JSON))
 
 	// 在保存接口内直接启动异步无阻塞 goroutine，彻底剔除前端发起的更新 api 和轮询开销
-	if hasSubStoreUpdate {
+	if hasSubStoreSync {
 		subStoreSyncing.Store(true) // 开启后台更新标记
 		go func() {
 			// 无论执行成功或失败，结束时重置后台更新标记
@@ -434,9 +452,9 @@ func (app *App) updateConfig(c *gin.Context) {
 					targets = append(targets, utils.SingboxName+newConfig.SingboxOld.Version)
 				}
 
-				// 打印日志，格式如: msg="已触发 sub-store 后台更新" name="sub丨mihomo"
-				slog.Info("已触发 sub-store 后台更新", "name", strings.Join(targets, "丨"))
-				utils.UpdateSubStorePartial(nil, doSub, doMihomo, doLatest, doOld)
+				// 打印日志，格式如: msg="已触发 Sub-Store 后台同步" name="sub丨mihomo"
+				slog.Info("已触发 Sub-Store 后台同步", "name", strings.Join(targets, "丨"))
+				utils.SyncSubStorePartial(nil, doSub, doMihomo, doLatest, doOld)
 			}
 		}()
 	}
@@ -444,7 +462,7 @@ func (app *App) updateConfig(c *gin.Context) {
 	// 响应结果给前端让它出 UI 提示
 	c.JSON(http.StatusOK, gin.H{
 		"message":               "配置已保存",
-		"substore_syncing":      hasSubStoreUpdate,
+		"substore_syncing":      hasSubStoreSync,
 		"substore_need_ghproxy": needGetGhProxy,
 	})
 }
@@ -466,6 +484,10 @@ func (app *App) getStatus(c *gin.Context) {
 		}
 	}
 
+	subStoreUpdateMu.RLock()
+	updateMsg := subStoreUpdateMsg
+	subStoreUpdateMu.RUnlock()
+
 	c.JSON(http.StatusOK, gin.H{
 		"checking":          app.checking.Load(),
 		"fetching":          check.Fetching.Load(),
@@ -479,7 +501,9 @@ func (app *App) getStatus(c *gin.Context) {
 		"processResults":    check.ProcessResults.Load(),
 		"lastCheck":         lastCheck,
 		"isSubStoreRunning": assets.IsSubStoreRunning.Load(),
-		"subStoreSyncing":   subStoreSyncing.Load(),  // 将后台更新状态暴露给前端
+		"subStoreSyncing":   subStoreSyncing.Load(),  // 配置文件同步状态
+		"subStoreUpdating":  subStoreUpdating.Load(), // 程序资源更新状态
+		"subStoreUpdateMsg": updateMsg,
 		"eta":               check.ETASeconds.Load(), // -1=计算中, 0=完成, >0=剩余秒
 
 		"subStorePort":  config.GlobalConfig.SubStorePort,
@@ -497,6 +521,90 @@ func (app *App) triggerCheckHandler(c *gin.Context) {
 func (app *App) forceCloseHandler(c *gin.Context) {
 	check.ForceClose.Store(true)
 	c.JSON(http.StatusOK, gin.H{"message": "已强制关闭"})
+}
+
+func (app *App) updateSubStoreHandler(c *gin.Context) {
+	// 使用 CompareAndSwap 防止重复并发触发
+	if !subStoreUpdating.CompareAndSwap(false, true) {
+		c.JSON(http.StatusConflict, gin.H{"error": "Sub-Store 正在更新资源，请稍后再试"})
+		return
+	}
+
+	// 触发前先清空上一次的结果
+	subStoreUpdateMu.Lock()
+	subStoreUpdateMsg = ""
+	subStoreUpdateMu.Unlock()
+
+	// 异步执行更新逻辑，防止阻塞前端 HTTP 响应
+	go func() {
+		// 完成后重置更新状态
+		defer subStoreUpdating.Store(false)
+
+		// 加上互斥锁，避免与后台的定时更新任务产生冲突
+		app.updateMu.Lock()
+		defer app.updateMu.Unlock()
+
+		slog.Info("Sub-Store 触发手动更新检查...")
+		result, err := assets.UpdateSubStoreAssets()
+
+		var finalMsg string
+		if err != nil {
+			slog.Error("更新 Sub-Store 失败", "error", err)
+			finalMsg = "更新 Sub-Store 失败: " + err.Error()
+		} else if result != nil && (result.UpdatedBackend || result.UpdatedFrontend) {
+			if result.UpdatedBackend {
+				if !app.checking.Load() {
+					slog.Info("Sub-Store 服务 重启中...")
+					if app.cancel != nil {
+						app.cancel()
+						time.Sleep(500 * time.Millisecond)
+						if err := assets.KillNode(); err != nil {
+							slog.Error("强制清理 node 失败", "err", err)
+						}
+						app.ctx, app.cancel = context.WithCancel(context.Background())
+					}
+					go assets.RunSubStoreService(app.ctx)
+				} else {
+					slog.Warn("当前正在执行代理检测，跳过重启 Sub-Store 服务，新后端将在下次启动时生效")
+				}
+			}
+
+			// 触发已聚合在 APP 层的通知系统
+			utils.SendNotifySubStoreAssets(
+				result.UpdatedFrontend, result.NewFrontendVer,
+				result.UpdatedBackend, result.NewBackendVer,
+			)
+
+			// 组装成功信息
+			var parts []string
+			args := []any{}
+
+			if result.UpdatedFrontend {
+				parts = append(parts, "前端 "+result.NewFrontendVer)
+				args = append(args,
+					"前端", result.NewFrontendVer,
+				)
+			}
+			if result.UpdatedBackend {
+				parts = append(parts, "后端 "+result.NewBackendVer)
+				args = append(args,
+					"后端", result.NewBackendVer,
+				)
+			}
+			finalMsg = "Sub-Store 更新成功: " + strings.Join(parts, ", ")
+			slog.Info("Sub-Store 更新成功", args...)
+		} else {
+			finalMsg = "Sub-Store 已是最新版本，无需更新"
+			slog.Info("Sub-Store 已是最新版本，无需更新")
+		}
+		// 写入最终结果供前端轮询获取
+		subStoreUpdateMu.Lock()
+		subStoreUpdateMsg = finalMsg
+		subStoreUpdateMu.Unlock()
+	}()
+
+	// 立即响应 200，前端轮询 /api/status 看到 subStoreUpdating = true 即可显示对应特效
+	c.JSON(http.StatusOK, gin.H{"message": "启动 Sub-Store 资源更新任务"})
 }
 
 // getLogs 获取日志

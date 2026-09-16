@@ -22,7 +22,7 @@ import (
 // Args 脚本操作参数
 type Args = map[string]any
 
-// ScriptOperator 脚本操作参数，对应 sub-store process 列表中的每一项
+// ScriptOperator 脚本操作参数，对应 Sub-Store process 列表中的每一项
 type ScriptOperator struct {
 	Type       string `json:"type"`
 	Args       Args   `json:"args,omitempty"`
@@ -31,7 +31,7 @@ type ScriptOperator struct {
 	Disabled   bool   `json:"disabled"`
 }
 
-// sub-store 资源结构体
+// Sub-Store 资源结构体
 
 // sub 单条订阅
 type sub struct {
@@ -342,7 +342,7 @@ func mergeSubProcess(existing []json.RawMessage, scpOps []any, cfg config.SubPro
 	for _, raw := range existing {
 		switch {
 		case isQuickSettingOperator(raw):
-			// 仅更新 disabled，保留用户的 args
+			// 仅同步 disabled，保留用户的 args
 			patched, err := patchDisabled(raw, false)
 			if err != nil {
 				return nil, fmt.Errorf("修补 Quick Setting 失败: %w", err)
@@ -353,7 +353,7 @@ func mergeSubProcess(existing []json.RawMessage, scpOps []any, cfg config.SubPro
 		case isScpOperator(raw):
 			// SCP 操作：先判断是否为 SubInfo
 			if cfg.SubInfo && isSubInfoScpOperator(raw) {
-				// 更新代理前缀，保留 #fragment 与 arguments
+				// 同步更新代理前缀，保留 #fragment 与 arguments
 				rebuilt, err := rebuildSubInfoContent(raw)
 				if err != nil {
 					return nil, fmt.Errorf("重建 SubInfo 操作失败: %w", err)
@@ -572,7 +572,7 @@ func newDefaultSub(data []byte) sub {
 		SubUserInfo:    SubUserInfoURL,
 		Source:         "local",
 		Content:        string(data),
-		// Process 由 updateSub 内 mergeSubProcess 动态组装
+		// Process 由 syncSub 内 mergeSubProcess 动态组装
 		Process: []any{},
 	}
 }
@@ -701,8 +701,8 @@ func createResource(endpoint string, data any, name string) error {
 	return nil
 }
 
-// updateResource 更新资源（PATCH）
-func updateResource(endpoint string, data any, name string) error {
+// syncResource 同步资源（PATCH）
+func syncResource(endpoint string, data any, name string) error {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -722,15 +722,15 @@ func updateResource(endpoint string, data any, name string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("更新 %s 失败，状态码: %d", name, resp.StatusCode)
+		return fmt.Errorf("同步 %s 失败，状态码: %d", name, resp.StatusCode)
 	}
 	return nil
 }
 
-// sub 更新
+// sub 同步
 
-// updateSub 创建或差量更新 sub 订阅
-func updateSub(s sub) error {
+// syncSub 创建或差量同步 sub 订阅
+func syncSub(s sub) error {
 	endpoint := "sub"
 	cfg := config.GlobalConfig.SubProcess
 	scpOps := buildScpOps(cfg)
@@ -764,13 +764,13 @@ func updateSub(s sub) error {
 		SubUserInfo: s.SubUserInfo,
 		Process:     merged,
 	}
-	return updateResource(endpoint, patch, SubName)
+	return syncResource(endpoint, patch, SubName)
 }
 
-// file 更新
+// file 同步
 
-// updateSubStoreFile 创建或差量更新 file 资源（mihomo / singbox）
-func (f file) updateSubStoreFile() error {
+// syncSubStoreFile 创建或差量同步 file 资源（mihomo / singbox）
+func (f file) syncSubStoreFile() error {
 	// 收集本程序配置的 SCP 操作
 	var scpOps []any
 	for _, item := range f.Process {
@@ -796,7 +796,7 @@ func (f file) updateSubStoreFile() error {
 		if err := createResource(endpoint, f, f.Name); err != nil {
 			return fmt.Errorf("创建 %s 失败: %w", f.Name, err)
 		}
-		slog.Info("sub-store 订阅已创建", "name", f.Name)
+		slog.Info("Sub-Store 订阅已创建", "name", f.Name)
 		return nil
 	}
 
@@ -807,19 +807,19 @@ func (f file) updateSubStoreFile() error {
 	}
 	f.Process = merged
 
-	if err := updateResource(endpoint, f, f.Name); err != nil {
-		return fmt.Errorf("更新 %s 失败: %w", f.Name, err)
+	if err := syncResource(endpoint, f, f.Name); err != nil {
+		return fmt.Errorf("同步 %s 失败: %w", f.Name, err)
 	}
-	slog.Info("sub-store 订阅已更新", "name", f.Name)
+	slog.Info("Sub-Store 订阅已同步", "name", f.Name)
 	return nil
 }
 
 // 入口
 
-// UpdateSubStore 更新 sub-store 全部订阅
+// SyncSubStore 同步 Sub-Store 全部订阅
 // 执行检测完毕后如果有新节点，无脑进行四个维度的全量推送
-func UpdateSubStore(yamlData []byte) {
-	UpdateSubStorePartial(yamlData, true, true, true, true)
+func SyncSubStore(yamlData []byte) {
+	SyncSubStorePartial(yamlData, true, true, true, true)
 }
 
 // 判断是否需要做耗时的 GetGhProxy 探活
@@ -842,8 +842,8 @@ func needGhProxy(doSub, doMihomo, doSbLatest, doSbOld bool) bool {
 	return false
 }
 
-// UpdateSubStorePartial 按需精准更新指定的配置 (供 API 调用)
-func UpdateSubStorePartial(yamlData []byte, doSub, doMihomo, doSbLatest, doSbOld bool) {
+// SyncSubStorePartial 按需精准同步指定的配置 (供 API 调用)
+func SyncSubStorePartial(yamlData []byte, doSub, doMihomo, doSbLatest, doSbOld bool) {
 	subStoreMu.Lock()
 	defer subStoreMu.Unlock()
 
@@ -877,17 +877,17 @@ func UpdateSubStorePartial(yamlData []byte, doSub, doMihomo, doSbLatest, doSbOld
 	// --- 1. sub ---
 	if doSub {
 		defaultSub := newDefaultSub(yamlData)
-		if err := updateSub(defaultSub); err != nil {
-			slog.Error("更新订阅失败", "name", defaultSub.Name, "error", err)
+		if err := syncSub(defaultSub); err != nil {
+			slog.Error("同步订阅失败", "name", defaultSub.Name, "error", err)
 			return
 		}
-		slog.Info("sub-store 订阅已更新", "name", defaultSub.Name)
+		slog.Info("Sub-Store 订阅已同步", "name", defaultSub.Name)
 	}
 
 	// --- 2. mihomo ---
 	if doMihomo {
-		if err := newMihomoFile().updateSubStoreFile(); err != nil {
-			slog.Warn("mihomo 订阅更新失败", "error", err)
+		if err := newMihomoFile().syncSubStoreFile(); err != nil {
+			slog.Warn("mihomo 订阅同步失败", "error", err)
 		}
 	}
 
@@ -899,19 +899,19 @@ func UpdateSubStorePartial(yamlData []byte, doSub, doMihomo, doSbLatest, doSbOld
 	if doSbLatest {
 		if err := processSingboxFile(&config.GlobalConfig.SingboxLatest, latestSingboxJS, latestSingboxJSON, LatestSingboxVersion); err != nil {
 			name := SingboxName + "-" + latestSingboxJSON
-			slog.Warn(name+"订阅更新失败", "error", err)
+			slog.Warn(name+"订阅同步失败", "error", err)
 		}
 	}
 
 	if doSbOld {
 		if err := processSingboxFile(&config.GlobalConfig.SingboxOld, OldSingboxJS, OldSingboxJSON, OldSingboxVersion); err != nil {
 			name := SingboxName + "-" + OldSingboxVersion
-			slog.Warn(name+"订阅更新失败", "error", err)
+			slog.Warn(name+"订阅同步失败", "error", err)
 		}
 	}
 
 	if doSub || doMihomo || doSbLatest || doSbOld {
-		slog.Info("sub-store 更新完成")
+		slog.Info("Sub-Store 同步完成")
 	}
 }
 
@@ -922,8 +922,8 @@ func processSingboxFile(sbc *config.SingBoxConfig, defaultJS, defaultJSON, versi
 		jsonStr = sbc.JSON
 	}
 	f := newSingboxFile(SingboxName+"-"+version, js, jsonStr)
-	if err := f.updateSubStoreFile(); err != nil {
-		slog.Warn("sub-store 订阅更新失败", "name", f.Name, "error", err)
+	if err := f.syncSubStoreFile(); err != nil {
+		slog.Warn("Sub-Store 订阅同步失败", "name", f.Name, "error", err)
 		return err
 	}
 	return nil

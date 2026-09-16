@@ -351,7 +351,7 @@ func resolveSubUrls(progressCallback func(stepName string, done, total, availabl
 		var valid int
 		for _, subURLRemote := range config.GlobalConfig.SubUrlsRemote {
 			// 处理为标准的raw地址
-			subURLRemote = parse.NormalizeGitHubRawURL(subURLRemote)
+			subURLRemote = utils.NormalizeGitHubRawURL(subURLRemote)
 			warped := utils.WarpURL(subURLRemote, utils.IsGhProxyAvailable)
 			if remote, err := fetchRemoteSubUrls(warped); err != nil {
 				if !errors.Is(err, ErrIgnore) {

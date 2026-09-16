@@ -39,13 +39,15 @@ func getArch() string {
 }
 
 // 创建 GitHub 客户端
-func newGitHubClient() (*selfupdate.GitHubSource, error) {
-	return selfupdate.NewGitHubSource(
-		selfupdate.GitHubConfig{
-			// 使用定义的token,避免速率限制
-			APIToken: config.GlobalConfig.GithubToken,
-		},
-	)
+func newGitHubClient(useToken bool) (*selfupdate.GitHubSource, error) {
+	cfg := selfupdate.GitHubConfig{}
+	token := config.GlobalConfig.GithubToken
+	hasValidToken := utils.IsValidGitHubToken(token)
+
+	if useToken && hasValidToken {
+		cfg.APIToken = token
+	}
+	return selfupdate.NewGitHubSource(cfg)
 }
 
 // 创建 Updater
@@ -95,24 +97,26 @@ func detectSuccessNotify(currentVersion string, latest *selfupdate.Release) {
 	if needNotify {
 		fmt.Println("\033[32m🔎 详情查看: https://github.com/sinspired/subs-check-pro")
 
-		var downloadURL string
+		var updateHint string
 		switch {
 		case isDockerEnv:
-			downloadURL = "ghcr.io/sinspired/subs-check-pro:" + latest.Version()
+			updateHint = fmt.Sprintf("docker pull sinspired/subs-check-pro:%s", latest.Version())
+
 		case isGUI:
-			downloadURL = "GUI内核: " + latest.AssetURL
+			updateHint = "GUI内核: " + latest.AssetURL
+
 		default:
-			downloadURL = latest.AssetURL
+			updateHint = latest.AssetURL
 		}
 
-		fmt.Println("🔗 手动更新:", downloadURL, "\033[0m")
+		fmt.Println("🔗 手动更新:", updateHint, "\033[0m")
 
 		// 发送更新成功通知
 		utils.SendNotifyDetectLatestRelease(
 			currentVersion,
 			latest.Version(),
 			isDockerEnv, isGUI,
-			downloadURL,
+			updateHint,
 		)
 	}
 }
@@ -187,29 +191,31 @@ func restartSelfWindowsSilent(exe string) error {
 	return nil
 }
 
-// 清理系统代理环境变量
-func clearProxyEnv() {
-	for _, key := range []string{
-		"HTTP_PROXY", "http_proxy",
-		"HTTPS_PROXY", "https_proxy",
-		"ALL_PROXY", "all_proxy",
-		"NO_PROXY", "no_proxy",
-	} {
-		os.Unsetenv(key)
-	}
-}
-
 // 单次尝试更新（带超时）
-func tryUpdateOnce(parentCtx context.Context, updater *selfupdate.Updater, latest *selfupdate.Release,
-	exe string, assetURL, validationURL string, clearProxy bool, label string,
+func tryUpdateOnce(parentCtx context.Context, latest *selfupdate.Release,
+	exe string, assetURL, validationURL string, clearProxy bool, label string, useToken bool,
 ) error {
 	if clearProxy {
 		slog.Info("清理系统代理", slog.String("strategy", label))
-		clearProxyEnv()
+		utils.UnsetAllProxyEnvVars()
 	}
 
-	latest.AssetURL = assetURL
-	latest.ValidationAssetURL = validationURL
+	// 为本次请求单独构建干净的 Client 和 Updater
+	client, err := newGitHubClient(useToken)
+	if err != nil {
+		return fmt.Errorf("创建客户端失败: %w", err)
+	}
+	checksumFile := "subs-check-pro_" + latest.Version() + "_checksums.txt"
+	updater, err := newUpdater(client, checksumFile, true)
+	if err != nil {
+		return fmt.Errorf("创建更新器失败: %w", err)
+	}
+
+	// 浅拷贝 Release 对象，防止将当前策略拼装的 Proxy URL 污染给后续的其他策略
+	attemptRelease := *latest
+	attemptRelease.AssetURL = assetURL
+	attemptRelease.ValidationAssetURL = validationURL
+
 	slog.Info("正在更新", slog.String("策略", label))
 
 	// 设置下载新版本单个策略超时,如未在配置文件内设置,默认为2分钟
@@ -224,7 +230,7 @@ func tryUpdateOnce(parentCtx context.Context, updater *selfupdate.Updater, lates
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- updater.UpdateTo(ctx, latest, exe)
+		errCh <- updater.UpdateTo(ctx, &attemptRelease, exe)
 	}()
 
 	select {
@@ -241,10 +247,19 @@ func tryUpdateOnce(parentCtx context.Context, updater *selfupdate.Updater, lates
 
 // detectLatestRelease 探测最新版本并判断是否需要更新
 func (app *App) detectLatestRelease() (*selfupdate.Release, bool, error) {
+	token := config.GlobalConfig.GithubToken
+	hasValidToken := utils.IsValidGitHubToken(token)
+
 	// 清除系统代理
-	utils.UnsetAllProxyEnvVars()
+	if hasValidToken {
+		isSysProxy = utils.GetSysProxy()
+	} else {
+		utils.UnsetAllProxyEnvVars()
+	}
+
 	ctx := context.Background()
-	client, err := newGitHubClient()
+	// Detect 调用的是 GitHub 官方 API 接口，强制使用 Token 以防止限流
+	client, err := newGitHubClient(hasValidToken)
 	if err != nil {
 		return nil, false, fmt.Errorf("创建 GitHub 客户端失败: %w", err)
 	}
@@ -260,6 +275,18 @@ func (app *App) detectLatestRelease() (*selfupdate.Release, bool, error) {
 	}
 	if !found {
 		return nil, false, nil
+	}
+
+	// 此时探测到了 latest 版本，重新创建带验证器的 updater 获取包含 ValidationAssetID 信息的 Release 对象
+	// 否则 go-selfupdate 在后续下载时 ValidationAssetID 为 0，触发 404 或下载到无效 HTML
+	checksumFile := "subs-check-pro_" + latest.Version() + "_checksums.txt"
+	updaterWithVal, err := newUpdater(client, checksumFile, true)
+	if err == nil {
+		if valLatest, valFound, valErr := updaterWithVal.DetectLatest(ctx, repo); valErr == nil && valFound {
+			latest = valLatest
+		} else {
+			slog.Warn("尝试获取校验文件信息失败，请检查 checksum 文件是否存在", slog.Any("err", valErr))
+		}
 	}
 
 	if strings.HasPrefix(app.version, "dev-") {
@@ -300,32 +327,8 @@ func (app *App) CheckUpdateAndRestart(silentUpdate bool) {
 		return
 	}
 
-	checksumFile := "subs-check-pro_" + latest.Version() + "_checksums.txt"
-
 	// 更新前检测系统代理环境
 	isSysProxy = utils.GetSysProxy()
-
-	client, err := newGitHubClient()
-	if err != nil {
-		slog.Error("创建 GitHub 客户端失败", slog.Any("err", err))
-		return
-	}
-
-	updater, err := newUpdater(client, checksumFile, true)
-	if err != nil {
-		slog.Error("创建 updater 失败", slog.Any("err", err))
-		return
-	}
-
-	latest, found, err := updater.DetectLatest(ctx, repo)
-	if err != nil {
-		slog.Error("检查更新失败", slog.Any("err", err))
-		return
-	}
-	if !found {
-		slog.Debug("未找到可用版本")
-		return
-	}
 
 	// 开发版逻辑：不更新，只提示
 	if strings.HasPrefix(app.version, "dev") {
@@ -361,12 +364,23 @@ func (app *App) CheckUpdateAndRestart(silentUpdate bool) {
 	ghProxyCh := make(chan bool, 1)
 	go func() { ghProxyCh <- utils.GetGhProxy() }()
 
+	// 辅助函数：安全拼接代理URL，防止出现 "https://ghproxy.com/" 的废弃下载链接
+	getProxyValURL := func(ghProxy, valURL string) string {
+		if valURL == "" {
+			return ""
+		}
+		return ghProxy + valURL
+	}
+
 	if isSysProxy {
-		// 策略 1：系统代理
-		if err := tryUpdateOnce(ctx, updater, latest, exe, latest.AssetURL, latest.ValidationAssetURL, false, "使用系统代理"); err == nil {
+		// 策略 1：系统代理 - 直连官方地址 -> 安全，允许带 Token (useToken: true)
+		if err := tryUpdateOnce(ctx, latest, exe, latest.AssetURL, latest.ValidationAssetURL, false, "使用系统代理", true); err == nil {
 			app.updateSuccess(currentVersion, latest.Version(), silentUpdate)
 			return
+		} else {
+			slog.Error("策略更新失败", slog.String("strategy", "使用系统代理"), slog.Any("err", err))
 		}
+
 		// 策略 2：GitHub 代理
 		var isGhProxy bool
 		select {
@@ -374,35 +388,53 @@ func (app *App) CheckUpdateAndRestart(silentUpdate bool) {
 		case <-time.After(10 * time.Second):
 			isGhProxy = false
 		}
+
+		// 策略 2：GitHub 代理 - 走第三方地址 -> 危险！必须禁用 Token (useToken: false)
 		if isGhProxy {
 			ghProxy := config.GlobalConfig.GithubProxy
-			if err := tryUpdateOnce(ctx, updater, latest, exe, ghProxy+latest.AssetURL, ghProxy+latest.ValidationAssetURL, true, "使用 GitHub 代理"); err == nil {
+			if err := tryUpdateOnce(ctx, latest, exe, ghProxy+latest.AssetURL, getProxyValURL(ghProxy, latest.ValidationAssetURL), true, "使用 GitHub 代理", false); err == nil {
 				app.updateSuccess(currentVersion, latest.Version(), silentUpdate)
 				return
+			} else {
+				slog.Error("策略更新失败", slog.String("strategy", "使用 GitHub 代理"), slog.Any("err", err))
 			}
 		}
-		// 策略 3：原始链接
-		if err := tryUpdateOnce(ctx, updater, latest, exe, latest.AssetURL, latest.ValidationAssetURL, true, "使用原始链接"); err == nil {
+
+		// 策略 3：原始链接直连兜底 - 官方地址 -> 安全，允许带 Token (useToken: true)
+		if err := tryUpdateOnce(ctx, latest, exe, latest.AssetURL, latest.ValidationAssetURL, true, "使用原始链接", true); err == nil {
 			app.updateSuccess(currentVersion, latest.Version(), silentUpdate)
 			return
+		} else {
+			slog.Error("策略更新失败", slog.String("strategy", "使用原始链接"), slog.Any("err", err))
 		}
 	} else {
-		// 无系统代理，直接使用 GitHub 代理和原始链接
-		// 策略 1：GitHub 代理
-		isGhProxy := <-ghProxyCh
+		// 无系统代理时
+		var isGhProxy bool
+		select {
+		case isGhProxy = <-ghProxyCh:
+		case <-time.After(10 * time.Second):
+			isGhProxy = false
+		}
+
+		// 策略 1：GitHub 代理 - 危险！禁用 Token (useToken: false)
 		if isGhProxy {
 			ghProxy := config.GlobalConfig.GithubProxy
-			if err := tryUpdateOnce(ctx, updater, latest, exe, ghProxy+latest.AssetURL, ghProxy+latest.ValidationAssetURL, true, "使用 GitHub 代理"); err == nil {
+			if err := tryUpdateOnce(ctx, latest, exe, ghProxy+latest.AssetURL, getProxyValURL(ghProxy, latest.ValidationAssetURL), true, "使用 GitHub 代理", false); err == nil {
 				app.updateSuccess(currentVersion, latest.Version(), silentUpdate)
 				return
+			} else {
+				slog.Error("策略更新失败", slog.String("strategy", "使用 GitHub 代理"), slog.Any("err", err))
 			}
 		}
-		// 策略 2：原始链接
-		if err := tryUpdateOnce(ctx, updater, latest, exe, latest.AssetURL, latest.ValidationAssetURL, true, "使用原始链接"); err == nil {
+
+		// 策略 2：原始链接 - 安全，允许带 Token (useToken: true)
+		if err := tryUpdateOnce(ctx, latest, exe, latest.AssetURL, latest.ValidationAssetURL, true, "使用原始链接", true); err == nil {
 			app.updateSuccess(currentVersion, latest.Version(), silentUpdate)
 			return
+		} else {
+			slog.Error("策略更新失败", slog.String("strategy", "使用原始链接"), slog.Any("err", err))
 		}
 	}
 
-	slog.Error("更新失败，请稍后重试或手动更新", slog.String("url", latest.AssetURL))
+	slog.Error("所有更新策略均失败，请稍后重试或手动更新", slog.String("url", latest.AssetURL))
 }

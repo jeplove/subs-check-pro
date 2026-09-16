@@ -162,7 +162,7 @@ func (cs *ConfigSaver) generateAllYaml(proxies []map[string]any) ([]byte, error)
 
 	// 仅在执行本地保存，且 SubStore 运行时触发 SubStore 更新
 	if cs.methodName == "local" && config.GlobalConfig.SubStorePort != "" && assets.IsSubStoreRunning.Load() {
-		utils.UpdateSubStore(yamlData)
+		utils.SyncSubStore(yamlData)
 	}
 	return yamlData, nil
 }

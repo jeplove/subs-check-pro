@@ -11,24 +11,29 @@ import (
 
 // NormalizeGitHubRawURL 将 GitHub 的 blob/raw 页面链接转换为 raw.githubusercontent.com 直链
 func NormalizeGitHubRawURL(urlStr string) string {
-	// 已经是 raw.githubusercontent.com 或不是 github.com 链接，直接返回
-	if strings.Contains(urlStr, "raw.githubusercontent.com") || !strings.Contains(urlStr, "github.com") {
-		return urlStr
-	}
+    // 已经是 raw.githubusercontent.com 或不是 github.com 链接，直接返回
+    if strings.Contains(urlStr, "raw.githubusercontent.com") || !strings.Contains(urlStr, "github.com") {
+        return urlStr
+    }
 
-	// 统一去掉 www 前缀
-	urlStr = strings.Replace(urlStr, "www.github.com", "github.com", 1)
+    // 去掉 www 前缀
+    urlStr = strings.Replace(urlStr, "www.github.com", "github.com", 1)
 
-	// 检查是否包含 /blob/ 或 /raw/
-	// GitHub 结构通常是: github.com/{user}/{repo}/[blob|raw]/{branch}/{path}
-	// 目标结构是: raw.githubusercontent.com/{user}/{repo}/{branch}/{path}
+    // 避免误伤 releases/download 和 archive
+    if strings.Contains(urlStr, "/releases/download/") || strings.Contains(urlStr, "/archive/") {
+        return urlStr
+    }
 
-	urlStr = strings.Replace(urlStr, "github.com", "raw.githubusercontent.com", 1)
-	urlStr = strings.Replace(urlStr, "/blob/", "/", 1)
-	urlStr = strings.Replace(urlStr, "/raw/", "/", 1)
+    // 处理 blob/raw
+    if strings.Contains(urlStr, "/blob/") || strings.Contains(urlStr, "/raw/") {
+        urlStr = strings.Replace(urlStr, "github.com", "raw.githubusercontent.com", 1)
+        urlStr = strings.Replace(urlStr, "/blob/", "/", 1)
+        urlStr = strings.Replace(urlStr, "/raw/", "/", 1)
+    }
 
-	return urlStr
+    return urlStr
 }
+
 
 // WarpURL 添加github代理前缀
 func WarpURL(url string, isGhProxyAvailable bool) string {

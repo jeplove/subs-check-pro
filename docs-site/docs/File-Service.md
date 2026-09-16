@@ -33,6 +33,6 @@ share-password: ""
 | 服务地址                                                   | 格式说明                      | 来源说明                      |
 | --------------------------------------------------------- | ----------------------------- | ---------------------------- |
 | `http://127.0.0.1:8199/sub/{share-password}/all.yaml`     | Clash 格式节点                 | 由 subs-check-pro 直接生成        |
-| `http://127.0.0.1:8199/sub/{share-password}/mihomo.yaml`  | 带分流规则的 Mihomo/Clash 订阅  | 从上方 sub-store 转换下载后提供|
-| `http://127.0.0.1:8199/sub/{share-password}/base64.txt`   | Base64 格式订阅                | 从上方 sub-store 转换下载后提供|
+| `http://127.0.0.1:8199/sub/{share-password}/mihomo.yaml`  | 带分流规则的 Mihomo/Clash 订阅  | 从上方 Sub-Store 转换下载后提供|
+| `http://127.0.0.1:8199/sub/{share-password}/base64.txt`   | Base64 格式订阅                | 从上方 Sub-Store 转换下载后提供|
 | `http://127.0.0.1:8199/sub/{share-password}/history.yaml` | Clash 格式节点                 | 历次检测可用节点               |

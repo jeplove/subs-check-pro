@@ -84,6 +84,47 @@ func IsLocalURL(urlStr string) bool {
 		ip.IsLinkLocalMulticast()
 }
 
+// IsValidGitHubToken 校验 GitHub Token 格式是否合法
+// 覆盖 Classic Token (ghp_) 和 Fine-grained Token (github_pat_) 等
+func IsValidGitHubToken(token string) bool {
+	token = strings.TrimSpace(token)
+	// GitHub Token 的最低长度通常为 40 位（Classic Token）
+	if len(token) < 40 {
+		return false
+	}
+
+	// 常见的 GitHub Token 前缀
+	prefixes := []string{
+		"ghp_",        // Personal Access Token (Classic)
+		"github_pat_", // Fine-grained Personal Access Token
+		"gho_",        // OAuth Access Token
+		"ghu_",        // GitHub App user-to-server token
+		"ghs_",        // GitHub App server-to-server token
+		"ghr_",        // GitHub App refresh token
+	}
+
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(token, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// InjectGitHubToken 安全地向官方域名注入 Token
+func InjectGitHubToken(req *http.Request, token string) {
+	if !IsValidGitHubToken(token) {
+		// Token 不合法或为空，直接跳过
+		return
+	}
+
+	host := strings.ToLower(req.URL.Host)
+	// 仅对 GitHub 官方域名及其子域注入，严防 Token 泄露给第三方（如 ghproxy 等）
+	if host == "github.com" || host == "api.github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, "githubusercontent.com") {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	}
+}
+
 // GetSysProxy 检测系统代理是否可用，并设置环境变量
 func GetSysProxy() bool {
 	// 清理所有可能的代理环境变量
@@ -135,6 +176,10 @@ func UnsetAllProxyEnvVars() {
 		"NO_PROXY", "no_proxy",
 	} {
 		os.Unsetenv(key)
+	}
+	// 强制关闭 HTTP 空闲长连接，确保代理环境变量更改立即对后续的默认 Client 生效
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		t.CloseIdleConnections()
 	}
 }
 
@@ -254,8 +299,21 @@ func checkGhProxyAvailable(githubProxy string) (bool, string, float64) {
 		},
 	}
 
+	// 1. 手动创建 Request 对象，以便后续修改 Header
+	req, err := http.NewRequest("GET", testURL, nil)
+	if err != nil {
+		return false, githubProxy, 0
+	}
+
+	// 2. 判断并安全注入 Token
+	token := config.GlobalConfig.GithubToken
+	if IsValidGitHubToken(token) {
+		InjectGitHubToken(req, token)
+	}
+
 	start := time.Now()
-	resp, err := client.Get(testURL)
+	// 3. 使用 client.Do 发送带 Header 的请求，而不是 client.Get
+	resp, err := client.Do(req)
 	if err != nil {
 		return false, githubProxy, 0
 	}

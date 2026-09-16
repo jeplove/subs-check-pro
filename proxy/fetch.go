@@ -60,7 +60,7 @@ func FetchSubsData(rawURL string) ([]byte, error) {
 	timeout := max(10, conf.SubUrlsTimeout)
 
 	// 处理为标准的GitHub raw地址
-	rawURL = parse.NormalizeGitHubRawURL(rawURL)
+	rawURL = utils.NormalizeGitHubRawURL(rawURL)
 
 	candidates, hasPlaceholder := buildCandidateURLs(rawURL)
 	var lastErr error
@@ -223,9 +223,8 @@ func fetchOnce(target string, useProxy bool, timeoutSec int, ua string) ([]byte,
 	// 4.1 GitHub 域名：使用 Token 提升速率限制 (未认证 60次/h → 认证 5000次/h)
 	if isGitHubRequest(req.URL) {
 		req.Header.Set("Accept", "application/vnd.github.v3+json")
-		if token := config.GlobalConfig.GithubToken; token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
+		// GitHub 域名：使用 Token 提升速率限制 (未认证 60次/h → 认证 5000次/h)
+		utils.InjectGitHubToken(req, config.GlobalConfig.GithubToken)
 	}
 
 	// 4.2 处理本地请求特殊 Header
