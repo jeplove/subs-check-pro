@@ -309,7 +309,12 @@ func setupSubStoreEnv(cmd *exec.Cmd, paths *subStorePaths) error {
 		// 2.38.0 开始, Node.js 需要设置 CORS allowlist，由于要支持 CF 隧道，默认为 *
 		"SUB_STORE_CORS_ALLOWED_ORIGINS=*",
 	)
-
+	// 新增：支持前端 URL 自定义配置
+	frontendURL := os.Getenv("SUB_STORE_FRONTEND_URL")
+	if frontendURL != "" {
+		env = append(env, "SUB_STORE_FRONTEND_URL="+frontendURL)
+		slog.Info("Sub-Store 前端 URL 已设置", "url", frontendURL)
+	}
 	if cron := config.GlobalConfig.SubStoreSyncCron; cron != "" {
 		env = append(env, "SUB_STORE_BACKEND_SYNC_CRON="+cron)
 	}
