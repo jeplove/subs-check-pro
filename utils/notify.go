@@ -102,6 +102,11 @@ func decorateURL(raw string, kind NotifyKind, downloadURL string) string {
 
 	// q.Set("format", "markdown")
 
+		// 钉钉做特殊处理
+	if scheme != "dingtalk" && scheme != "dingding" {
+		q.Set("format", "markdown")
+	}
+	
 	switch scheme {
 	case "bark", "barks":
 		q.Set("icon", WarpURL(IconURL, IsGhProxyAvailable))
