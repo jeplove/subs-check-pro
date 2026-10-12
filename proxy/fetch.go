@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/common/convert"
@@ -46,9 +45,6 @@ var (
 const (
 	warnLimitSize = 20 << 20
 
-	// 配置未初始化或无效时使用的安全默认值。
-	defaultMaxSubscriptionBytes = 50 << 20
-
 	// maxPreallocBytes 按 Content-Length 预分配缓冲区的上限
 	maxPreallocBytes = 32 << 20
 
@@ -59,20 +55,16 @@ const (
 	//
 	// 原实现的 Transport 没有设置拨号超时，对黑洞地址（SYN 被丢弃）只能等到
 	// 整个请求超时（>=10s）才放弃；死链越多，被白白占用的并发槽位越多。
-	dialTimeout = 8 * time.Second
+	dialTimeout = 10 * time.Second
 
 	// tlsHandshakeTimeout TLS 握手最长耗时。
-	tlsHandshakeTimeout = 8 * time.Second
+	tlsHandshakeTimeout = 10 * time.Second
 
 	// hostBreakerTTL 主机熔断的有效期。到期后会重新放行探测一次。
-	hostBreakerTTL = 5 * time.Minute
+	hostBreakerTTL = 3 * time.Minute
 )
 
 var (
-	// maxSubscriptionBytes 单个订阅允许读取的最大字节数。
-	// maxSubscriptionBytes = 100 << 20
-	maxSubscriptionBytes atomic.Int64
-
 	// errNotText 响应体头部含 NUL 字节：二进制文件（图片/压缩包/可执行文件等），不可能是订阅。
 	errNotText           = errors.New("响应内容为二进制数据，不是有效订阅")
 	errEmptySubscription = errors.New("订阅响应内容为空")
@@ -81,15 +73,13 @@ var (
 	errTooLarge = errors.New("订阅文件过大")
 )
 
-func init() {
-	maxSubscriptionBytes.Store(defaultMaxSubscriptionBytes)
-}
-
+// currentMaxSubscriptionBytes 直接从全局配置中读取文件大小限制
 func currentMaxSubscriptionBytes() int64 {
-	if size := maxSubscriptionBytes.Load(); size > 0 {
-		return size
+	if config.GlobalConfig != nil && config.GlobalConfig.SubUrlMaxSizeMB > 0 {
+		return int64(config.GlobalConfig.SubUrlMaxSizeMB) << 20
 	}
-	return defaultMaxSubscriptionBytes
+	// 兜底安全值：如果配置未正常初始化，则默认使用 50MB
+	return 50 << 20
 }
 
 // clientMap 用于缓存不同代理策略的 HTTP Client
@@ -458,6 +448,78 @@ func FetchSubsData(rawURL string) ([]byte, error) {
 	return nil, fmt.Errorf("%d次重试后失败: %w", maxRetries, lastErr)
 }
 
+// fallbackDNS 系统 DNS 解析失败时使用的备用 DNS（UDP 53）：阿里、腾讯。
+var fallbackDNS = []string{"223.5.5.5:53", "119.29.29.29:53"}
+
+// lookupViaServers 并发向所有备用 DNS 查询，返回最先得到的结果；整体最多等 3 秒。
+func lookupViaServers(ctx context.Context, host string, servers []string) []string {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	ch := make(chan []string, len(servers)) // 带缓冲，提前返回时其余 goroutine 不会阻塞泄漏
+	for _, srv := range servers {
+		go func(srv string) {
+			r := &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					var d net.Dialer
+					return d.DialContext(ctx, network, srv)
+				},
+			}
+			ips, err := r.LookupHost(ctx, host)
+			if err != nil {
+				ch <- nil
+				return
+			}
+			ch <- ips
+		}(srv)
+	}
+
+	for range servers {
+		select {
+		case ips := <-ch:
+			if len(ips) > 0 {
+				return ips
+			}
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	return nil
+}
+
+// dialWithDNSFallback 先用系统 DNS 拨号；仅当失败原因是 DNS 解析失败时，
+// 才改用备用 DNS 解析后直连 IP 重试（TLS 的 SNI 仍使用原域名，不受影响）。
+// 备用 DNS 也解析不到时返回原始错误，因此「域名确实不存在」的判定与熔断逻辑保持不变。
+func dialWithDNSFallback(base *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := base.DialContext(ctx, network, addr)
+		if err == nil {
+			return conn, nil
+		}
+
+		if _, ok := errors.AsType[*net.DNSError](err); !ok {
+			return nil, err
+		}
+		host, port, splitErr := net.SplitHostPort(addr)
+		if splitErr != nil || net.ParseIP(host) != nil {
+			return nil, err
+		}
+
+		for _, s := range lookupViaServers(ctx, host, fallbackDNS) {
+			ip := net.ParseIP(s)
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() { // 过滤被污染的回环 / 0.0.0.0 结果
+				continue
+			}
+			if c, e := base.DialContext(ctx, network, net.JoinHostPort(s, port)); e == nil {
+				slog.Debug("系统 DNS 解析失败，已通过备用 DNS 连接", "host", host, "ip", s)
+				return c, nil
+			}
+		}
+		return nil, err
+	}
+}
+
 // getClient 根据代理地址获取复用的 Client
 func getClient(proxyAddr string) *http.Client {
 	if v, ok := clientMapCache.Load(proxyAddr); ok {
@@ -466,17 +528,18 @@ func getClient(proxyAddr string) *http.Client {
 
 	// 创建新的 Transport
 	transport := &http.Transport{
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		MaxIdleConns:        100,              // 全局最大空闲连接
 		MaxIdleConnsPerHost: 20,               // 每个 Host 最大空闲连接
 		IdleConnTimeout:     90 * time.Second, // 空闲超时
 		DisableKeepAlives:   false,            // 开启长连接复用
 
-		// 连接阶段快速失败：死链/黑洞地址不再傻等整个请求超时
-		DialContext: (&net.Dialer{
+		// 连接阶段快速失败：死链/黑洞地址不再傻等整个请求超时；
+		// 系统 DNS 解析失败时自动改用备用 DNS 再试
+		DialContext: dialWithDNSFallback(&net.Dialer{
 			Timeout:   dialTimeout,
 			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		}),
 		TLSHandshakeTimeout: tlsHandshakeTimeout,
 	}
 
@@ -629,11 +692,8 @@ func fetchOnce(target string, useProxy bool, timeoutSec int, ua string) ([]byte,
 //  2. Content-Length 已知时一次性预分配，避免 ReadAll 的倍增扩容（峰值内存约为数据量的 2~3 倍）。
 func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 	maxBytes := currentMaxSubscriptionBytes()
-	if maxBytes <= 0 {
-		maxBytes = defaultMaxSubscriptionBytes
-	}
 
-	// 如果 Content-Length 存在且超过限制，直接报错，避免无谓的读取
+	// 1. 如果 Content-Length 存在且超过限制，直接报错，避免无谓的读取
 	if resp.ContentLength > maxBytes {
 		return nil, &fetchFailure{
 			err: fmt.Errorf(
@@ -647,16 +707,20 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 		}
 	}
 
+	// 用于标记是否已经打印过体积警告，避免 Content-Length 触发一次，读完后又触发一次
+	warnedSize := false
 	if resp.ContentLength >= warnLimitSize {
 		slog.Warn(
 			"订阅文件较大",
+			"URL", resp.Request.URL,
 			"size_mb", fmt.Sprintf("%.1f", float64(resp.ContentLength)/(1<<20)),
 			"warn_mb", warnLimitSize>>20,
 			"limit_mb", maxBytes>>20,
 		)
+		warnedSize = true
 	}
 
-	// 1. 头部嗅探
+	// 2. 头部嗅探
 	head := make([]byte, sniffBytes)
 	n, err := io.ReadFull(resp.Body, head)
 	head = head[:n]
@@ -671,12 +735,12 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 		return nil, &fetchFailure{err: errEmptySubscription, class: failPermanent}
 	}
 
+	// 极端情况：如果限制大小比 sniffBytes 还小，在此处触发超限
 	if int64(n) > maxBytes {
 		return nil, &fetchFailure{
 			err: fmt.Errorf(
-				"%w: %.1f MB（限制 %d MB）",
+				"%w: 大小超出限制（限制 %d MB）",
 				errTooLarge,
-				float64(n)/(1<<20),
 				maxBytes>>20,
 			),
 			class: failPermanent,
@@ -689,7 +753,7 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 		return head, nil
 	}
 
-	// 2. 读取剩余部分
+	// 3. 读取剩余部分
 	capHint := 64 << 10
 	if cl := resp.ContentLength; cl > 0 {
 		// 额外留出 bytes.MinRead：Buffer.ReadFrom 每轮都要求至少 MinRead 的空闲空间，
@@ -709,11 +773,12 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 
 	size := int64(buf.Len())
 	if size > maxBytes {
+		// 此时我们只知道文件大小 > maxBytes，但不知道实际大小，因为读取被截断了。
 		return nil, &fetchFailure{
 			err: fmt.Errorf(
-				"%w: %.1f MB（限制 %d MB）",
+				"%w: > %.1f MB（限制 %d MB）", // 提示 "> 50.0 MB" 而不是 "50.0 MB"
 				errTooLarge,
-				float64(size)/(1<<20),
+				float64(maxBytes)/(1<<20),
 				maxBytes>>20,
 			),
 			class: failPermanent,
@@ -721,9 +786,11 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 		}
 	}
 
-	if size >= warnLimitSize {
+	// 如果之前因为没有 Content-Length 没触发警告，读完后发现文件很大，这里补报
+	if !warnedSize && size >= warnLimitSize {
 		slog.Warn(
 			"订阅文件较大",
+			"URL", resp.Request.URL,
 			"size_mb", fmt.Sprintf("%.1f", float64(size)/(1<<20)),
 			"warn_mb", warnLimitSize>>20,
 			"limit_mb", maxBytes>>20,

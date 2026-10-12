@@ -94,8 +94,8 @@ if ($Debug) {
     else {
         # 默认：Windows + Linux
         $targets = @(
-            @{ GOOS = "windows"; GOARCH = "amd64"; OutputFile = "$execName.exe" },
-            @{ GOOS = "linux"; GOARCH = "amd64"; OutputFile = "$execName" }
+            @{ GOOS = "linux"; GOARCH = "amd64"; OutputFile = "$execName" },
+            @{ GOOS = "windows"; GOARCH = "amd64"; OutputFile = "$execName.exe" }
         )
         Write-Host "🐞 Debug：默认 Win+Lin（单独编译用 -Win / -Lin）" -ForegroundColor Blue
     }
@@ -166,7 +166,7 @@ try {
 
             # 针对不同平台的 ldflags 处理
             $ldflags = "-s -w -X main.Version=$Version -X main.CurrentCommit=$Commit"
-            
+
             # Apple 官方强制要求依赖系统 libSystem 动态库，禁止全静态编译
             if ($target.GOOS -ne "darwin") {
                 $ldflags += " -extldflags '-static'"

@@ -361,7 +361,7 @@ func isSysProxyAvailable(ctx context.Context, proxy string) bool {
 	}
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   8 * time.Second,
+		Timeout:   15 * time.Second,
 	}
 
 	// 检测目标列表
@@ -456,7 +456,7 @@ func findAvailableSysProxy(configProxy string, candidates []string) string {
 
 // CheckProxy 支持前端手动检测系统代理可用性，获取可用系统代理
 func CheckProxy(proxyAddr string) CheckProxyResult {
-	const timeout = 10 * time.Second
+	const timeout = 15 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

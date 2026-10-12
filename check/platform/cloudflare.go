@@ -170,9 +170,6 @@ func FetchCFTrace(httpClient *http.Client, ctx context.Context, baseURL string) 
 		req.Header.Set(key, value)
 	}
 
-	// 一次性请求，用完立即关闭连接，避免空闲连接一直占着代理服务器上的连接
-	req.Close = true
-
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", ""
@@ -215,8 +212,6 @@ func checkCFEndpoint(httpClient *http.Client, url string, expectedStatus int) (b
 	for key, value := range cfCommonHeaders() {
 		req.Header.Set(key, value)
 	}
-
-	req.Close = true // 一次性探测，不保留连接
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

@@ -111,6 +111,7 @@ type Config struct {
 	// 注意：真正防止 OOM 的是 MemoryLimitMB；这个只是日常情况下的内存/CPU 取舍旋钮。
 	GCPercent int `yaml:"gc-percent"`
 
+	NetGuard         bool     `yaml:"net-guard"`
 	SubUrlsRemote    []string `yaml:"sub-urls-remote"`
 	SubUrls          []string `yaml:"sub-urls"`
 	SuccessRate      float64  `yaml:"success-rate"`
@@ -219,6 +220,8 @@ var OriginDefaultConfig = &Config{
 	SubsDedupeBatch: 100000,
 
 	SubUrlMaxSizeMB: 50,
+
+	NetGuard: false,
 
 	UseLastResult:    false,
 	UseHistoryResult: false,

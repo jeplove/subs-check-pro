@@ -67,11 +67,6 @@ var (
 
 const MediaCheckMaxRetries = 2
 
-// mediaPlatformParallel 单个节点做媒体检测时，各平台检测的最大并行数。
-// 原先 len(platforms) 个平台同时开跑，每个平台都会新建一条经由代理的连接（含 TLS 握手），
-// 总连接数 = 媒体并发 × 平台数 × 重试次数
-const mediaPlatformParallel = 3
-
 // Result 存储节点检测结果
 type Result struct {
 	Proxy          map[string]any
@@ -521,7 +516,22 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 	// 使用独立 ctx，不随「达到成功数量限制」的 cancel 提前停止，检测收尾后统一关闭。
 	probeCtx, probeCancel := context.WithCancel(context.Background())
 	defer probeCancel()
-	utils.NetGuard.Start(probeCtx)
+	netGuardOn := config.GlobalConfig.NetGuard
+	// 三个阶段各一个闸门，容量即各自配置的自然并发上限（网络健康时不产生任何额外限制）：
+	//   测活 = 测活并发；测速 = 测速并发；
+	//   媒体 = 媒体并发 × 平台数（每个节点会同时跑多个平台检测，闸门按「单平台任务」计）。
+	// 复核预算 = 总节点数的 5%（至少 20），避免死节点被整体复测拖慢检测。
+	// 由配置项 net-guard 控制，关闭后不启动探针，Acquire/Release/WaitSettled 均为空操作。
+	if netGuardOn {
+		caps := utils.GateCaps{Alive: pc.aliveConcurrent}
+		if speedON {
+			caps.Speed = pc.speedConcurrent
+		}
+		if mediaON {
+			caps.Media = pc.mediaConcurrent * len(config.GlobalConfig.Platforms)
+		}
+		utils.NetGuard.Start(probeCtx, caps, max(20, pc.proxyCount/20))
+	}
 
 	pc.historyWg.Add(1)
 	go func() {
@@ -537,8 +547,13 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 	go pc.runSpeedStage(ctx, cancel)
 	pc.runMediaStageAndCollect(geoDB, ctx, cancel)
 
-	// 流水线已结束，停止探针
+	// 流水线已结束，停止探针，并输出保护机制是否介入的摘要，便于定位「变慢」是否与保护有关
 	probeCancel()
+	if netGuardOn {
+		if text, intervened := utils.NetGuard.Summary(); intervened {
+			slog.Info(text)
+		}
+	}
 
 	// 关闭历史节点收集并按分数排序
 	close(pc.historyChan)
@@ -594,9 +609,9 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 	CurrentStepName.Store("生成检测报告")
 	time.Sleep(10 * time.Second)
 
-	// 等本机网络（NAT 连接表 / DNS / 队列）真正恢复后再进入后续的保存、上传、通知，
-	// 否则紧随其后的请求容易撞上残余拥塞而超时。网络正常时几乎立即返回，最多等 30s。
-	utils.NetGuard.WaitSettled(context.Background(), 30*time.Second)
+	// 仅当本次检测中出现过拥塞，才等本机网络（NAT 连接表 / DNS / 队列）恢复后再保存、上传、通知，
+	// 否则紧随其后的请求容易撞上残余拥塞而超时。没出现过拥塞时立即返回，最多等 15s。
+	utils.NetGuard.WaitSettled(context.Background(), 15*time.Second)
 
 	// 1. 深度分析 (利用上一步的成功率进行排序，生成 analysis yaml)
 	pc.GenerateAnalysisReport()
@@ -625,13 +640,15 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 }
 
 // distributeJobs 分发代理任务
-//
-// 只负责把节点配置放入 aliveChan，不再提前创建 mihomo 客户端。
-// 原实现在这里创建客户端，导致「分发 worker + 通道缓冲 + 测活 worker」三处同时
-// 持有已创建的客户端（约 3 倍测活并发），白白占用内存与句柄；
-// 现改为在测活 worker 内按需创建，同一时刻存活的客户端数 ≈ 测活并发数。
 func (pc *ProxyChecker) distributeJobs(proxies []map[string]any, ctx context.Context) {
 	defer close(pc.aliveChan)
+
+	concurrency := min(pc.proxyCount, pc.aliveConcurrent)
+	var wg sync.WaitGroup
+
+	// 使用原子索引来分发任务
+	var proxyIndex atomic.Int64
+	proxyIndex.Store(-1) // 初始化为 -1
 
 	// 定义主动 GC 的阈值
 	var gcThreshold = config.GlobalConfig.GCThreshold
@@ -639,39 +656,68 @@ func (pc *ProxyChecker) distributeJobs(proxies []map[string]any, ctx context.Con
 		gcThreshold = 20000
 	}
 
-	needCF := config.GlobalConfig.DropBadCfNodes ||
-		(config.GlobalConfig.MediaCheck && needsCF(config.GlobalConfig.Platforms))
+	// 启动工作协程池
+	for range concurrency {
+		wg.Go(func() {
+			for {
+				// 原子地获取下一个代理索引
+				index := proxyIndex.Add(1)
+				if index >= int64(len(proxies)) {
+					return // 所有代理都已处理完毕
+				}
 
-	for i := range proxies {
-		index := int64(i)
-		mapping := proxies[i]
-		// 任务取出后，立即断开源切片的引用，便于 GC
-		proxies[i] = nil
+				if checkCtxDone(ctx) {
+					// 收到终止信号，将当前队列未处理的历史节点无伤抢救下来
+					pc.scoreAndRecycle(proxies[index], "untested", 0, nil)
+					proxies[index] = nil
+					continue // 这里用 continue 继续消耗数组完成抢救
+				}
 
-		if checkCtxDone(ctx) {
-			// 收到终止信号：继续遍历，把未处理的历史节点无伤抢救下来
-			pc.scoreAndRecycle(mapping, "untested", 0, nil)
-			continue
-		}
+				mapping := proxies[index]
 
-		// 周期性强制归还内存
-		if index > 0 && index%gcThreshold == 0 {
-			go func(currentIdx int64) {
-				slog.Debug("已处理 " + strconv.FormatInt(currentIdx, 10) + " 个节点，正在执行主动内存回收...")
-				debug.FreeOSMemory()
-			}(index)
-		}
+				// 任务取出后，立即断开源切片的引用
+				// 此时，如果 mapping 没被后续 CreateClient 引用，它就是垃圾；
+				// 如果 mapping 被传给了 Client，等 Job.Close() 时它也会变成垃圾。
+				proxies[index] = nil
 
-		job := &ProxyJob{Result: Result{Proxy: mapping}, NeedCF: needCF}
+				// 周期性强制归还内存
+				// 只有当索引达到阈值倍数时触发
+				if index > 0 && index%gcThreshold == 0 {
+					go func(currentIdx int64) {
+						slog.Debug("已处理 " + strconv.FormatInt(currentIdx, 10) + " 个节点，正在执行主动内存回收...")
+						debug.FreeOSMemory()
+					}(index)
+				}
 
-		// 当 aliveChan 满时会阻塞，形成背压
-		select {
-		case pc.aliveChan <- job:
-		case <-ctx.Done():
-			pc.scoreAndRecycle(mapping, "untested", 0, nil)
-		}
+				cli := CreateClient(mapping)
+				if cli == nil {
+					// 创建失败：视为 alive 完成（失败），不进入 speed/media
+					pc.pt.CountAlive(false)
+					// 底层生成故障视为死节点
+					pc.scoreAndRecycle(mapping, "alive_fail", 0, nil)
+					continue
+				}
+
+				job := &ProxyJob{
+					Client: cli,
+					Result: Result{Proxy: mapping},
+				}
+				job.NeedCF = config.GlobalConfig.DropBadCfNodes ||
+					(config.GlobalConfig.MediaCheck && needsCF(config.GlobalConfig.Platforms))
+
+				// 当 aliveChan 满时会阻塞
+				select {
+				case pc.aliveChan <- job:
+				case <-ctx.Done():
+					job.Close()
+					return
+				}
+			}
+		})
 	}
 
+	// 等待所有工作协程完成
+	wg.Wait()
 	// 分发结束，再次强制清理（此时 proxies 切片虽然 length 很大，但全是 nil）
 	debug.FreeOSMemory()
 }
@@ -701,36 +747,33 @@ func (pc *ProxyChecker) runAliveStage(ctx context.Context, db *maxminddb.Reader)
 					job.Close()
 					continue
 				}
-				// 按需创建客户端（见 distributeJobs 说明）
-				if job.Client == nil {
-					job.Client = CreateClient(job.Result.Proxy)
-					if job.Client == nil {
-						// 创建失败（畸形节点等）：视为 alive 失败，不进入 speed/media
-						if job.aliveMarked.CompareAndSwap(false, true) {
-							pc.pt.CountAlive(false)
-						}
-						pc.scoreAndRecycle(job.Result.Proxy, "alive_fail", 0, nil)
-						job.Close()
-						continue
+				// 自适应闸门（net-guard 关闭或网络健康时几乎零开销）：
+				// 仅当本机网络真的连不上外网时才收紧同时在途的测活数（最低保留 1/2），恢复后自动加回。
+				if !utils.NetGuard.Acquire(ctx, utils.GateAlive) {
+					if job.aliveMarked.CompareAndSwap(false, true) {
+						pc.pt.CountAlive(false)
 					}
+					pc.scoreAndRecycle(job.Result.Proxy, "untested", 0, nil) // 抢救
+					job.Close()
+					continue
 				}
 
-				// 本机网络拥塞时先暂缓（最多 15s），自然降低并发，避免继续火上浇油
-				utils.NetGuard.Wait(ctx, 15*time.Second)
-
 				// 节点测活
-				aliveStart := time.Now()
 				isAlive := checkAlive(job, ctx)
 
-				// 失败复核：失败期间本机网络出现过异常，则失败原因未必在节点上。
-				// 等网络恢复后再测一次，避免把「本来存活」的节点误判为死亡。
-				if !isAlive && !checkCtxDone(ctx) && utils.NetGuard.BadSince(aliveStart) {
-					slog.Debug("测活失败期间本机网络异常，等待恢复后复核", "Name", job.Client.mProxy.Name())
-					utils.NetGuard.Wait(ctx, 30*time.Second)
+				// 拥塞期间失败：用有限的预算复核一次，避免把「本来存活」的节点误判为死亡。
+				// 不等待网络恢复，只做一次短暂抖动后重测，且预算用尽后不再复核。
+				if !isAlive && !checkCtxDone(ctx) && utils.NetGuard.TakeRecheck() {
+					slog.Debug("拥塞期间测活失败，复核一次", "Name", job.Client.mProxy.Name())
+					select {
+					case <-ctx.Done():
+					case <-time.After(time.Duration(300+rand.IntN(500)) * time.Millisecond):
+					}
 					if !checkCtxDone(ctx) {
 						isAlive = checkAlive(job, ctx)
 					}
 				}
+				utils.NetGuard.Release(utils.GateAlive)
 
 				if !isAlive {
 					// 记录非存活
@@ -820,8 +863,18 @@ func (pc *ProxyChecker) runSpeedStage(ctx context.Context, cancel context.Cancel
 					job.Close()
 					continue
 				}
+				// 测速闸门：本机网络拥塞时收紧同时下载的节点数（网络健康时不阻塞）
+				if !utils.NetGuard.Acquire(ctx, utils.GateSpeed) {
+					if job.speedMarked.CompareAndSwap(false, true) {
+						pc.pt.CountSpeed(false)
+					}
+					pc.scoreAndRecycle(job.Result.Proxy, "untested", 0, nil) // 抢救
+					job.Close()
+					continue
+				}
 				getBytes := func() uint64 { return job.Client.BytesRead.Load() }
 				speed, _, err := platform.CheckSpeed(job.Client.Client, Bucket, getBytes)
+				utils.NetGuard.Release(utils.GateSpeed)
 				success := err == nil && speed >= config.GlobalConfig.MinSpeed
 				if job.speedMarked.CompareAndSwap(false, true) {
 					pc.pt.CountSpeed(success)
@@ -997,9 +1050,6 @@ func needsCF(platforms []string) bool {
 
 // mediaCheck 并发检测所有媒体解锁平台
 func mediaCheck(job *ProxyJob, db *maxminddb.Reader, ctx context.Context) {
-	// 本机网络拥塞时暂缓（最多 10s）
-	utils.NetGuard.Wait(ctx, 10*time.Second)
-
 	mediaTimeout := config.GlobalConfig.MediaCheckTimeout
 	if mediaTimeout <= 0 {
 		mediaTimeout = 10
@@ -1026,13 +1076,13 @@ func mediaCheck(job *ProxyJob, db *maxminddb.Reader, ctx context.Context) {
 		}
 	}
 
-	// 限制单个节点同时检测的平台数，降低瞬时连接数
-	sem := make(chan struct{}, mediaPlatformParallel)
 	var wg sync.WaitGroup
 	for _, plat := range plats {
-		sem <- struct{}{}
 		wg.Go(func() {
-			defer func() { <-sem }()
+			// 媒体闸门：按「单平台任务」限制全局并发。这里刻意用 Background 而不是 ctx：
+			// 达到成功数量上限后 ctx 会被取消，但已进入媒体阶段的节点仍要完整检测完，不能被闸门跳过。
+			utils.NetGuard.Acquire(context.Background(), utils.GateMedia)
+			defer utils.NetGuard.Release(utils.GateMedia)
 			checkOnePlatform(job, plat, mediaClient, db, ctx)
 		})
 	}
@@ -1627,8 +1677,6 @@ func withRetry(ctx context.Context, fn func() error) error {
 				return ctx.Err()
 			case <-time.After(wait):
 			}
-			// 本机网络拥塞时，重试只会雪上加霜（超时→重试→更拥塞），先等恢复
-			utils.NetGuard.Wait(ctx, 10*time.Second)
 		}
 		err = fn()
 		if !isRetryable(err) {
