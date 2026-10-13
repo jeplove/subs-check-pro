@@ -6,14 +6,14 @@ function operator(proxies = []) {
 
     const expanded = ips.map((server, i) => ({
       ...p,
-      name: + `${p.name}|+${i + 1}`,
+      name: `${p.name}|+${i + 1}`,
       server,
     }))
 
     if (p._domain) {
       expanded.push({
         ...p,
-        name: + `${p.name}|已裂变`,
+        name: `${p.name}|已裂变`,
         server: p._domain,
       })
     }
