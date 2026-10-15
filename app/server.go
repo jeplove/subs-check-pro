@@ -385,6 +385,7 @@ func (app *App) registerAPIRoutes(router *gin.Engine) {
 		api.POST("/logs/clear", app.clearLogsHandler)
 		api.GET("/analysis-report", app.getAnalysisReport)
 		api.POST("/proxy/check", app.proxyCheckHandler)
+		api.POST("/proxy/check-github", app.checkGhProxyHandler)
 		api.POST("/notify/test", app.notifyTestHandler)
 		api.POST("/substore/update", app.updateSubStoreHandler)
 
@@ -946,4 +947,17 @@ func (app *App) clearLogsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "日志文件已清空",
 	})
+}
+
+// checkGhProxyHandler 检测 GitHub 代理是否可用，并返回最佳代理
+// POST /api/proxy/check-github
+func (app *App) checkGhProxyHandler(c *gin.Context) {
+	var req struct {
+		Proxy string `json:"proxy"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	// 第二个参数传 true，代表这是来自前端 WebUI 的手动触发检测
+	result := utils.FindBestGhProxy(strings.TrimSpace(req.Proxy), true)
+	c.JSON(http.StatusOK, result)
 }

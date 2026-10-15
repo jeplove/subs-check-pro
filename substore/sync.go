@@ -37,7 +37,6 @@ type ScriptOperator struct {
 type sub struct {
 	Name                  string   `json:"name"`
 	DisplayName           string   `json:"displayName"`
-	DisplayNameAlt        string   `json:"display-name"`
 	Remark                string   `json:"remark"`
 	MergeSources          string   `json:"mergeSources"`
 	IgnoreFailedRemoteSub bool     `json:"ignoreFailedRemoteSub"`
@@ -57,7 +56,6 @@ type sub struct {
 type file struct {
 	Name                   string   `json:"name"`
 	DisplayName            string   `json:"displayName"`
-	DisplayNameAlt         string   `json:"display-name"`
 	Remark                 string   `json:"remark,omitempty"`
 	Icon                   string   `json:"icon,omitempty"`
 	IsIconColor            bool     `json:"isIconColor,omitempty"`
@@ -73,6 +71,14 @@ type file struct {
 	Tag                    []string `json:"tag,omitempty"`
 }
 
+// ExistingData 线上现有数据结构
+type ExistingData struct {
+	Process        []json.RawMessage `json:"process"`
+	Tag            []string          `json:"tag"`
+	DisplayName    string            `json:"displayName"`
+	Remark         string            `json:"remark"`
+}
+
 // 常量
 const (
 	SubName     = "sub"
@@ -84,11 +90,13 @@ const (
 	// 差量合并时：有此前缀 → 按类型决策；无此前缀 → 用户操作，原样保留。
 	scpIDPrefix = "SCP."
 
+	defaultLatestVer  = "1.14"
 	latestSingboxJSON = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.json"
 	latestSingboxJS   = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.14.x/sing-box.js"
 
+	defaultExtraVer  = "1.15-pre"
 	ExtraSingboxJSON = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.15.x/sing-box.json"
-	ExtraSingboxJS = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.15.x/sing-box.js"
+	ExtraSingboxJS   = "https://raw.githubusercontent.com/sinspired/sub-store-template/main/1.15.x/sing-box.js"
 
 	// subInfoURLKeyword 用于在 SCP 操作中识别旧版 link 模式下的订阅流量信息脚本
 	subInfoURLKeyword = "sub-store-scripts"
@@ -115,12 +123,12 @@ func InitSingboxVersion() {
 	if config.GlobalConfig.SingboxLatest.Version != "" && config.GlobalConfig.SingboxLatest.JSON != "" && config.GlobalConfig.SingboxLatest.JS != "" {
 		LatestSingboxVersion = config.GlobalConfig.SingboxLatest.Version
 	} else {
-		LatestSingboxVersion = "1.14"
+		LatestSingboxVersion = defaultLatestVer
 	}
 	if config.GlobalConfig.SingboxExtra.Version != "" && config.GlobalConfig.SingboxExtra.JSON != "" && config.GlobalConfig.SingboxExtra.JS != "" {
 		ExtraSingboxVersion = config.GlobalConfig.SingboxExtra.Version
 	} else {
-		ExtraSingboxVersion = "1.15-pre"
+		ExtraSingboxVersion = defaultExtraVer
 	}
 }
 
@@ -553,16 +561,63 @@ func mergeFileProcess(existing []json.RawMessage, scpOps []any) ([]any, error) {
 	return result, nil
 }
 
+// Tag 清理工具
+// cleanTags 清理并升级旧版 Tag：将 "Subs-Check-Pro" 替换为 "SCP"，并始终确保包含 defaultTags。
+func cleanTags(tags []string, defaultTags []string) []string {
+	var result []string
+	seen := make(map[string]bool)
+	for _, t := range tags {
+		if t == "已检测" {
+			// continue
+		}
+		if t == "Subs-Check-Pro" {
+			t = "SCP"
+		}
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	// 确保注入预设的默认 Tag (例如 SCP)
+	for _, t := range defaultTags {
+		if !seen[t] {
+			seen[t] = true
+			result = append(result, t)
+		}
+	}
+	if result == nil {
+		result = []string{}
+	}
+	return result
+}
+
+// resolveDisplayName 判断线上已有的名称是否是默认名称。如果是默认名称，则使用我们当前设置的新名称予以覆盖。
+// 如果用户已经做了自定义，则原样保留。
+func resolveDisplayName(existingName, defaultName, resourceName string) string {
+	if existingName == "" || existingName == resourceName || strings.HasPrefix(existingName, "Subs-Check-Pro") {
+		return defaultName
+	}
+	return existingName
+}
+
+// resolveRemark 判断线上已有的备注是否是程序预设的备注。如果是默认备注，则使用最新预设予以覆盖。
+// 如果用户自己做了自定义修改，则尊重用户的修改原样保留。
+func resolveRemark(existingRemark, defaultRemark string) string {
+	if existingRemark == "" || strings.HasPrefix(existingRemark, "默认") {
+		return defaultRemark
+	}
+	return existingRemark
+}
+
 // 资源构建
 
 func newDefaultSub(data []byte) sub {
 	icon := "/scp/subs-check-pro.svg"
+	RemarkInfo := "默认订阅 (无分流规则)"
 	return sub{
 		Name:           SubName,
-		DisplayName:    SubName,
-		DisplayNameAlt: SubName,
-		Remark:         "默认订阅 (无分流规则)",
-		Tag:            []string{"Subs-Check-Pro", "已检测"},
+		Remark:         RemarkInfo,
+		Tag:            []string{"SCP", "已检测"},
 		Icon:           icon,
 		IsIconColor:    true,
 		SubUserInfo:    SubUserInfoURL,
@@ -579,15 +634,16 @@ func newMihomoFile() file {
 	if overwriteURL == "" {
 		overwriteURL = "http://127.0.0.1:8199/Mihomo-Rules-CDN.yaml"
 	}
+	remark := "默认 Mihomo 订阅 (带分流规则)"
 	return file{
-		Name:        MihomoName,
-		Remark:      "默认 Mihomo 订阅 (带分流规则)",
-		Tag:         []string{"Subs-Check-Pro", "已检测"},
-		IsIconColor: true,
-		SubInfoURL:  SubUserInfoURL,
-		Source:      "local",
-		SourceType:  "subscription",
-		SourceName:  SubName,
+		Name:           MihomoName,
+		Remark:         remark,
+		Tag:            []string{"SCP", "已检测"},
+		IsIconColor:    true,
+		SubInfoURL:     SubUserInfoURL,
+		Source:         "local",
+		SourceType:     "subscription",
+		SourceName:     SubName,
 		Process: []any{
 			ScriptOperator{
 				Type: "Script Operator",
@@ -618,15 +674,15 @@ func newSingboxFile(name, jsURL, jsonURL string) file {
 
 	icon := "/scp/sing-box.svg"
 	return file{
-		Name:        name,
-		Remark:      remark,
-		Tag:         []string{"Subs-Check-Pro", "已检测"},
-		Icon:        icon,
-		IsIconColor: true,
-		SubInfoURL:  SubUserInfoURL,
-		Source:      "remote",
-		SourceType:  "subscription",
-		SourceName:  "SUB",
+		Name:           name,
+		Remark:         remark,
+		Tag:            []string{"SCP", "已检测"},
+		Icon:           icon,
+		IsIconColor:    true,
+		SubInfoURL:     SubUserInfoURL,
+		Source:         "remote",
+		SourceType:     "subscription",
+		SourceName:     "SUB",
 		Process: []any{
 			ScriptOperator{
 				Type: "Script Operator",
@@ -649,32 +705,30 @@ func newSingboxFile(name, jsURL, jsonURL string) file {
 
 // HTTP 辅助
 
-// fetchProcess 获取指定资源的现有 process 列表（保留原始 JSON 用于差量合并）
-func fetchProcess(endpoint, name string) ([]json.RawMessage, error) {
-	// 使用带超时的本机客户端，避免 JS 引擎卡住时调用方永久挂起
+// fetchResourceData 获取指定资源的现有结构（含 DisplayName/Remark/Process/Tag 等保留原始 JSON 用于差量合并）
+func fetchResourceData(endpoint, name string) (ExistingData, error) {
+	var empty ExistingData
 	resp, err := localAPIClient.Get(utils.JoinURL(BaseURL, "api", endpoint, name))
 
 	if err != nil {
-		return nil, err
+		return empty, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return empty, err
 	}
 	var envelope struct {
-		Status string `json:"status"`
-		Data   struct {
-			Process []json.RawMessage `json:"process"`
-		} `json:"data"`
+		Status string       `json:"status"`
+		Data   ExistingData `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("解析 %s/%s 响应失败: %w", endpoint, name, err)
+		return empty, fmt.Errorf("解析 %s/%s 响应失败: %w", endpoint, name, err)
 	}
 	if envelope.Status != "success" {
-		return nil, fmt.Errorf("获取 %s/%s 失败", endpoint, name)
+		return empty, fmt.Errorf("获取 %s/%s 失败", endpoint, name)
 	}
-	return envelope.Data.Process, nil
+	return envelope.Data, nil
 }
 
 // createResource 创建资源
@@ -732,7 +786,7 @@ func syncSub(s sub) error {
 	cfg := config.GlobalConfig.SubProcess
 	scpOps := buildScpOps(cfg)
 
-	existing, err := fetchProcess(endpoint, s.Name)
+	existingData, err := fetchResourceData(endpoint, s.Name)
 	if err != nil {
 		// 首次创建
 		slog.Debug(fmt.Sprintf("检查 %s 失败: %v，正在创建...", s.Name, err))
@@ -745,21 +799,27 @@ func syncSub(s sub) error {
 	}
 
 	// 已存在：差量合并 process
-	merged, err := mergeSubProcess(existing, scpOps, cfg)
+	merged, err := mergeSubProcess(existingData.Process, scpOps, cfg)
 	if err != nil {
 		return fmt.Errorf("合并 %s process 失败: %w", s.Name, err)
 	}
 
 	patch := struct {
-		Icon        string `json:"icon,omitempty"`
-		Content     string `json:"content,omitempty"`
-		SubUserInfo string `json:"subUserinfo,omitempty"`
-		Process     []any  `json:"process"`
+		DisplayName    string   `json:"displayName,omitempty"`
+		Remark         string   `json:"remark,omitempty"`
+		Icon           string   `json:"icon,omitempty"`
+		Content        string   `json:"content,omitempty"`
+		SubUserInfo    string   `json:"subUserinfo,omitempty"`
+		Process        []any    `json:"process"`
+		Tag            []string `json:"tag"`
 	}{
-		Icon:        s.Icon,
-		Content:     s.Content,
-		SubUserInfo: s.SubUserInfo,
-		Process:     merged,
+		DisplayName:    resolveDisplayName(existingData.DisplayName, s.DisplayName, s.Name),
+		Remark:         resolveRemark(existingData.Remark, s.Remark),                 // 只有默认时才应用新的 RemarkInfo 规则
+		Icon:           s.Icon,
+		Content:        s.Content,
+		SubUserInfo:    s.SubUserInfo,
+		Process:        merged,
+		Tag:            cleanTags(existingData.Tag, s.Tag),
 	}
 	return syncResource(endpoint, patch, SubName)
 }
@@ -786,7 +846,7 @@ func (f file) syncSubStoreFile() error {
 	}
 
 	endpoint := "file"
-	existing, err := fetchProcess("wholeFile", f.Name)
+	existingData, err := fetchResourceData("wholeFile", f.Name)
 	if err != nil {
 		// 资源不存在，直接创建
 		slog.Debug(fmt.Sprintf("检查 %s 失败: %v，正在创建...", f.Name, err))
@@ -798,11 +858,16 @@ func (f file) syncSubStoreFile() error {
 	}
 
 	// 已存在：仅替换 SCP 操作，用户操作全部保留
-	merged, err := mergeFileProcess(existing, scpOps)
+	merged, err := mergeFileProcess(existingData.Process, scpOps)
 	if err != nil {
 		return fmt.Errorf("合并 %s process 失败: %w", f.Name, err)
 	}
 	f.Process = merged
+	f.Tag = cleanTags(existingData.Tag, f.Tag)
+
+	// 判断应用新的 DisplayName/Remark，如果用户作了彻底的自定义修改则保留自定义内容
+	f.DisplayName = resolveDisplayName(existingData.DisplayName, f.DisplayName, f.Name)
+	f.Remark = resolveRemark(existingData.Remark, f.Remark)
 
 	if err := syncResource(endpoint, f, f.Name); err != nil {
 		return fmt.Errorf("同步 %s 失败: %w", f.Name, err)

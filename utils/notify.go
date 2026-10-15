@@ -39,7 +39,7 @@ const (
 )
 
 const (
-	notifyTimeout = 20 * time.Second // 通知请求超时时间
+	notifyTimeout = 30 * time.Second // 通知请求超时时间
 	maxRetries    = 4                // 最大重试次数（包含首次）
 	retryDelay    = 2 * time.Second  // 重试基础等待间隔，按 2s、4s、8s 指数退避
 
@@ -47,6 +47,9 @@ const (
 	RepoURL       = "https://github.com/sinspired/subs-check-pro"                                                          // 仓库地址
 	IconURL       = "https://raw.githubusercontent.com/sinspired/subs-check-pro-webui/main/webui/static/icon/icon-512.png" // 通用图标 URL
 )
+
+// 全局级别的 TLS 会话缓存池，用于跨连接/跨请求复用 TLS 会话，减少握手耗时
+var globalTLSClientSessionCache = tls.NewLRUClientSessionCache(64)
 
 // NotifyRequest 表示通知请求体
 type NotifyRequest struct {
@@ -187,21 +190,24 @@ func getClient(proxyURL string) *http.Client {
 	}
 
 	dialer := &net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
+		Timeout:       15 * time.Second, // 从 10s 放宽到 15s
+		KeepAlive:     30 * time.Second,
+		FallbackDelay: 150 * time.Millisecond, // 从默认 300ms 降至 150ms。加速 IPv4/IPv6 双栈失败回退，防止 IPv6 路由黑洞死等
 	}
 
 	tr := &http.Transport{
 		DialContext:           dialer.DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   20 * time.Second, // 放宽到 20s，给予握手更充足的时间
 		ResponseHeaderTimeout: notifyTimeout,
+		ExpectContinueTimeout: 2 * time.Second, // 防止客户端发送大 Body 时死等服务端的 100-continue 响应
 		MaxIdleConns:          20,
 		MaxIdleConnsPerHost:   5,
 		IdleConnTimeout:       90 * time.Second,
 		// 直连客户端：Proxy 显式设为 nil
 		Proxy: nil,
 		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
+			MinVersion:         tls.VersionTLS12,
+			ClientSessionCache: globalTLSClientSessionCache, // 利用 LRU 缓存复用 TLS 握手状态
 		},
 	}
 

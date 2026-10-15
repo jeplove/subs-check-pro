@@ -65,7 +65,7 @@ var (
 	progressWeight ProgressWeight
 )
 
-const MediaCheckMaxRetries = 2
+const MediaCheckMaxRetries = 3
 
 // Result 存储节点检测结果
 type Result struct {
@@ -312,11 +312,8 @@ func Check() ([]Result, []map[string]any, error) {
 	// 获取动态映射的 CIDR 和 域名层级 文本
 	cidr, domainLevel := proxyutils.ThresholdToLevel(cfg.Threshold)
 
-	headSize := 0
-	if lastResultLength < 10 {
-		// 设置之前成功的节点顺序在前
-		headSize = lastResultLength
-	}
+	// 设置之前成功的节点顺序在前
+	headSize := lastResultLength
 
 	if len(proxies) > headSize && headSize > 0 {
 		tail := proxies[headSize:]
@@ -1253,7 +1250,17 @@ func (pc *ProxyChecker) updateProxyName(res *Result, httpClient *ProxyClient, sp
 	// 以节点IP查询位置重命名（如果开启）
 	if config.GlobalConfig.RenameNode {
 		if res.Country == "" {
-			country, _, countryCodeTag, ispTag, _ := proxyutils.GetProxyCountry(httpClient.Client, db, jctx, cfLoc, cfIP)
+			// 使用 MediaCheckTimeout 替换默认的短超时
+			locTimeout := config.GlobalConfig.MediaCheckTimeout
+			if locTimeout <= 0 {
+				locTimeout = 10
+			}
+			renameClient := &http.Client{
+				Transport: httpClient.Transport,
+				Timeout:   time.Duration(locTimeout) * time.Second,
+			}
+
+			country, _, countryCodeTag, ispTag, _ := proxyutils.GetProxyCountry(renameClient, db, jctx, cfLoc, cfIP)
 			res.Country = country
 			res.CountryCodeTag = countryCodeTag
 			res.ISPTag = ispTag
@@ -1642,13 +1649,11 @@ func isRetryable(err error) bool {
 		return true
 	}
 
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
 
-	var sysErr *os.SyscallError
-	if errors.As(err, &sysErr) {
+	if sysErr, ok := errors.AsType[*os.SyscallError](err); ok {
 		switch {
 		case errors.Is(sysErr.Err, syscall.ECONNRESET):
 			return true

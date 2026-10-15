@@ -86,6 +86,15 @@ func NewConfigSaver(results []check.Result, historyNodes []map[string]any, saveM
 
 // SaveConfig 保存配置的入口函数
 func SaveConfig(results []check.Result, historyNodes []map[string]any) {
+	// 在保存前，确保本次检测的所有节点名称完全唯一
+	var resultProxies []map[string]any
+	for _, r := range results {
+		if r.Proxy != nil {
+			resultProxies = append(resultProxies, r.Proxy)
+		}
+	}
+	utils.RenameDuplicateNodes(resultProxies)
+
 	// 1. 始终先保存到本地一份
 	localSaver := NewConfigSaver(results, historyNodes, "local")
 	if err := localSaver.Save(); err != nil {
@@ -427,5 +436,9 @@ func deduplicateByProxyKey(proxies []map[string]any) []map[string]any {
 			result = append(result, p)
 		}
 	}
+
+	// 在历史节点物理去重后，再进行一次名称唯一性处理
+	utils.RenameDuplicateNodes(result)
+
 	return result
 }
