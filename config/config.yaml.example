@@ -56,6 +56,13 @@ proxy-server-nameserver:
   - https://dns.alidns.com/dns-query
   - 8.8.8.8
 
+proxy-server-nameserver-policy:
+  +.local: system
+  +.baidu.com: 223.5.5.5
+  +.cloudflre.com: 1.1.1.1
+  +.github.com: 223.5.5.5
+  +.githubusercontent.com: 223.5.5.5
+
 # 超时时间(毫秒)(节点的最大延迟)，主要影响测活任务
 timeout: 6000
 

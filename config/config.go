@@ -58,6 +58,8 @@ type Config struct {
 	// 节点检测自定义 DNS 配置
 	NameServer            []string `yaml:"nameserver"`
 	ProxyServerNameserver []string `yaml:"proxy-server-nameserver"`
+	// 专用于解析节点域名的策略
+	ProxyServerNameserverPolicy map[string]any `mapstructure:"proxy-server-nameserver-policy" yaml:"proxy-server-nameserver-policy" json:"proxy-server-nameserver-policy"`
 
 	CheckInterval        int     `yaml:"check-interval"`
 	CronExpression       string  `yaml:"cron-expression"`
