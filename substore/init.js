@@ -44,13 +44,68 @@ const console = {
     error: function (...args) { __throttled_log("error", ...args); }
 };
 
+// JS 侧的无损二进制/Base64转换器
+const _b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const _b64tab = new Uint8Array(256);
+for (let i = 0; i < _b64chars.length; i++) _b64tab[_b64chars.charCodeAt(i)] = i;
+
+function __base64_to_uint8array(b64) {
+    // 正则必须保留 '='，确保 padding 长度计算不发生 1~2 个字节的残缺丢包！
+    b64 = b64.replace(/[^A-Za-z0-9\+\/\=]/g, '');
+    let len = b64.length;
+    if (len === 0) return new Uint8Array(0);
+
+    let bufLen = (len * 3) / 4;
+    if (b64.charAt(len - 1) === '=') bufLen--;
+    if (len > 1 && b64.charAt(len - 2) === '=') bufLen--;
+
+    let u8 = new Uint8Array(bufLen);
+    let i = 0, j = 0;
+    while (i < len) {
+        let c1 = _b64tab[b64.charCodeAt(i++)];
+        let c2 = _b64tab[b64.charCodeAt(i++)];
+        let c3 = _b64tab[b64.charCodeAt(i++)];
+        let c4 = _b64tab[b64.charCodeAt(i++)];
+
+        let p = (c1 << 18) | (c2 << 12) | ((c3 !== undefined ? c3 : 0) << 6) | (c4 !== undefined ? c4 : 0);
+        u8[j++] = (p >> 16) & 255;
+        if (j < bufLen) u8[j++] = (p >> 8) & 255;
+        if (j < bufLen) u8[j++] = p & 255;
+    }
+
+    // 强制转换为 Buffer，确保内部兼容 Node 原生库的包解析 API
+    return typeof Buffer !== 'undefined' ? Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength) : u8;
+}
+
+function __uint8array_to_base64(u8) {
+    let b64 = "";
+    let i = 0, len = u8.length;
+    while (i < len) {
+        let c1 = u8[i++];
+        let c2 = i < len ? u8[i++] : NaN;
+        let c3 = i < len ? u8[i++] : NaN;
+        let p = (c1 << 16) | ((isNaN(c2) ? 0 : c2) << 8) | (isNaN(c3) ? 0 : c3);
+        b64 += _b64chars.charAt((p >> 18) & 63);
+        b64 += _b64chars.charAt((p >> 12) & 63);
+        b64 += isNaN(c2) ? "=" : _b64chars.charAt((p >> 6) & 63);
+        b64 += isNaN(c3) ? "=" : _b64chars.charAt(p & 63);
+    }
+    return b64;
+}
+
 const $httpClient = {};
 const __http_callbacks = {};
 let __http_req_id = 0;
 
 ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].forEach(method => {
     $httpClient[method] = function (options, callback) {
-        let req = typeof options === 'string' ? { url: options } : options;
+        let req = typeof options === 'string' ? { url: options } : Object.assign({}, options);
+
+        if (req.body && (req.body instanceof Uint8Array || (typeof Buffer !== 'undefined' && Buffer.isBuffer(req.body)))) {
+            req.body = __uint8array_to_base64(req.body);
+            req["body-base64"] = true;
+        }
+
         let reqId = "req_" + (++__http_req_id);
         if (callback) { __http_callbacks[reqId] = callback; }
         __go_http_request_async(method.toUpperCase(), JSON.stringify(req), reqId);
@@ -61,13 +116,42 @@ function __dispatch_http_response(reqId, resMetaJson) {
     let cb = __http_callbacks[reqId];
     if (!cb) return;
     delete __http_callbacks[reqId];
+
     let res = JSON.parse(resMetaJson);
-    let err = res.error !== undefined ? res.error : null;
+    let err = res.error !== undefined && res.error !== null ? res.error : null;
     let resp = res.response !== undefined ? res.response : null;
+
     if (resp && res.reqId !== undefined) {
-        resp.body = __go_http_request_body(res.reqId);
+        let rawBody = __go_http_request_body(res.reqId);
+        if (resp.headers && resp.headers["__is_binary__"] === "true") {
+            delete resp.headers["__is_binary__"];
+            resp.body = __base64_to_uint8array(rawBody);
+        } else {
+            resp.body = rawBody;
+        }
     }
     cb(err, resp, resp ? resp.body : null);
+}
+
+// 原生的 UDP DNS 解析能力
+const $dns = {
+    query: function (options, callback) {
+        let reqId = "dns_" + (++__http_req_id);
+        if (callback) {
+            __http_callbacks[reqId] = callback;
+        }
+        __go_dns_query_async(JSON.stringify(options), reqId);
+    }
+};
+
+function __dispatch_dns_response(reqId, resJson) {
+    let cb = __http_callbacks[reqId];
+    if (!cb) return;
+    delete __http_callbacks[reqId];
+    let res = JSON.parse(resJson);
+    let err = res.error !== undefined && res.error !== null ? { message: res.error } : null;
+    let resp = res.response !== undefined ? res.response : null;
+    cb(err, resp);
 }
 
 // 终极优化：在 JS 侧剥离巨型 Body 绕过 JSON 序列化
