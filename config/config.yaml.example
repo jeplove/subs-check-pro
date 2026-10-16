@@ -202,8 +202,11 @@ sub-process:
     cache: enable
     # 缓存时长(秒)
     cache-ttl: 3600
+    custom-url: ''
+    
   # 开启节点裂变（将多 IP 展开为独立节点）
   node-split: false
+
   # 注入订阅流量信息节点
   sub-info: false
 

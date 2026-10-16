@@ -14,6 +14,7 @@ type SingBoxConfig struct {
 type ResolveDomainConfig struct {
 	Enable      bool   `yaml:"enable"`
 	Provider    string `yaml:"provider"`
+	CustomURL   string `mapstructure:"custom-url" yaml:"custom-url"`
 	Type        string `yaml:"type"`
 	Cache       string `yaml:"cache"`
 	CacheTTL    int    `yaml:"cache-ttl"`

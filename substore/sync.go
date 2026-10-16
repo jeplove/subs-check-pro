@@ -73,10 +73,10 @@ type file struct {
 
 // ExistingData 线上现有数据结构
 type ExistingData struct {
-	Process        []json.RawMessage `json:"process"`
-	Tag            []string          `json:"tag"`
-	DisplayName    string            `json:"displayName"`
-	Remark         string            `json:"remark"`
+	Process     []json.RawMessage `json:"process"`
+	Tag         []string          `json:"tag"`
+	DisplayName string            `json:"displayName"`
+	Remark      string            `json:"remark"`
 }
 
 // 常量
@@ -246,20 +246,28 @@ func buildScpOps(cfg config.SubProcessConfig) []any {
 	if needResolve {
 		rd := cfg.ResolveDomain
 
+		args := Args{
+			"provider":    rd.Provider, // Ali, Custom ...
+			"type":        rd.Type,     // IPv4 / IPv6
+			"filter":      "disabled",
+			"cache":       rd.Cache,       // enabled / disabled
+			"edns":        rd.Edns,        // 223.6.6.6
+			"concurrency": rd.Concurrency, // 20
+			"timeout":     rd.Timeout,     // 15000
+			"cacheTtl":    rd.CacheTTL,    // 300
+		}
+
+		// 如果选择的是 Custom (自定义) DNS
+		if rd.Provider == "Custom" {
+			args["url"] = rd.CustomURL
+			args["tlsSkipCertVerify"] = "disabled" // 根据 Sub-Store 的标准设为 disabled
+		}
+
 		ops = append(ops, ScriptOperator{
 			Type:       "Resolve Domain Operator",
 			CustomName: "节点解析",
 			ID:         newOperatorID(),
-			Args: Args{
-				"provider":    rd.Provider, // Ali
-				"type":        rd.Type,     // IPv6
-				"filter":      "disabled",
-				"cache":       rd.Cache,       // enabled
-				"edns":        rd.Edns,        // 223.6.6.6
-				"concurrency": rd.Concurrency, // 20
-				"timeout":     rd.Timeout,     // 15000
-				"cacheTtl":    rd.CacheTTL,    // 300
-			},
+			Args:       args,
 		})
 	}
 
@@ -615,14 +623,14 @@ func newDefaultSub(data []byte) sub {
 	icon := "/scp/subs-check-pro.svg"
 	RemarkInfo := "默认订阅 (无分流规则)"
 	return sub{
-		Name:           SubName,
-		Remark:         RemarkInfo,
-		Tag:            []string{"SCP", "已检测"},
-		Icon:           icon,
-		IsIconColor:    true,
-		SubUserInfo:    SubUserInfoURL,
-		Source:         "local",
-		Content:        string(data),
+		Name:        SubName,
+		Remark:      RemarkInfo,
+		Tag:         []string{"SCP", "已检测"},
+		Icon:        icon,
+		IsIconColor: true,
+		SubUserInfo: SubUserInfoURL,
+		Source:      "local",
+		Content:     string(data),
 		// Process 由 syncSub 内 mergeSubProcess 动态组装
 		Process: []any{},
 	}
@@ -636,14 +644,14 @@ func newMihomoFile() file {
 	}
 	remark := "默认 Mihomo 订阅 (带分流规则)"
 	return file{
-		Name:           MihomoName,
-		Remark:         remark,
-		Tag:            []string{"SCP", "已检测"},
-		IsIconColor:    true,
-		SubInfoURL:     SubUserInfoURL,
-		Source:         "local",
-		SourceType:     "subscription",
-		SourceName:     SubName,
+		Name:        MihomoName,
+		Remark:      remark,
+		Tag:         []string{"SCP", "已检测"},
+		IsIconColor: true,
+		SubInfoURL:  SubUserInfoURL,
+		Source:      "local",
+		SourceType:  "subscription",
+		SourceName:  SubName,
 		Process: []any{
 			ScriptOperator{
 				Type: "Script Operator",
@@ -674,15 +682,15 @@ func newSingboxFile(name, jsURL, jsonURL string) file {
 
 	icon := "/scp/sing-box.svg"
 	return file{
-		Name:           name,
-		Remark:         remark,
-		Tag:            []string{"SCP", "已检测"},
-		Icon:           icon,
-		IsIconColor:    true,
-		SubInfoURL:     SubUserInfoURL,
-		Source:         "remote",
-		SourceType:     "subscription",
-		SourceName:     "SUB",
+		Name:        name,
+		Remark:      remark,
+		Tag:         []string{"SCP", "已检测"},
+		Icon:        icon,
+		IsIconColor: true,
+		SubInfoURL:  SubUserInfoURL,
+		Source:      "remote",
+		SourceType:  "subscription",
+		SourceName:  "SUB",
 		Process: []any{
 			ScriptOperator{
 				Type: "Script Operator",
@@ -805,21 +813,21 @@ func syncSub(s sub) error {
 	}
 
 	patch := struct {
-		DisplayName    string   `json:"displayName,omitempty"`
-		Remark         string   `json:"remark,omitempty"`
-		Icon           string   `json:"icon,omitempty"`
-		Content        string   `json:"content,omitempty"`
-		SubUserInfo    string   `json:"subUserinfo,omitempty"`
-		Process        []any    `json:"process"`
-		Tag            []string `json:"tag"`
+		DisplayName string   `json:"displayName,omitempty"`
+		Remark      string   `json:"remark,omitempty"`
+		Icon        string   `json:"icon,omitempty"`
+		Content     string   `json:"content,omitempty"`
+		SubUserInfo string   `json:"subUserinfo,omitempty"`
+		Process     []any    `json:"process"`
+		Tag         []string `json:"tag"`
 	}{
-		DisplayName:    resolveDisplayName(existingData.DisplayName, s.DisplayName, s.Name),
-		Remark:         resolveRemark(existingData.Remark, s.Remark),                 // 只有默认时才应用新的 RemarkInfo 规则
-		Icon:           s.Icon,
-		Content:        s.Content,
-		SubUserInfo:    s.SubUserInfo,
-		Process:        merged,
-		Tag:            cleanTags(existingData.Tag, s.Tag),
+		DisplayName: resolveDisplayName(existingData.DisplayName, s.DisplayName, s.Name),
+		Remark:      resolveRemark(existingData.Remark, s.Remark), // 只有默认时才应用新的 RemarkInfo 规则
+		Icon:        s.Icon,
+		Content:     s.Content,
+		SubUserInfo: s.SubUserInfo,
+		Process:     merged,
+		Tag:         cleanTags(existingData.Tag, s.Tag),
 	}
 	return syncResource(endpoint, patch, SubName)
 }
