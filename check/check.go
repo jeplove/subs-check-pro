@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/ratelimit"
 	"github.com/metacubex/mihomo/adapter"
-	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/oschwald/maxminddb-golang/v2"
 	"github.com/samber/lo"
@@ -504,8 +503,8 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 		}
 	}()
 
-	// 启动流水线任务前设置 mihomo 变量
-	resolver.DisableIPv6 = !config.GlobalConfig.EnableIPv6
+	// 启动流水线任务前设置 mihomo 变量及注入全局自定义 DNS
+	SetupMihomoDNS()
 
 	CurrentStepName.Store("进度")
 

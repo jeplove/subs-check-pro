@@ -48,13 +48,17 @@ type SubProcessConfig struct {
 }
 
 type Config struct {
-	PrintProgress        bool    `yaml:"print-progress"`
-	ProgressMode         string  `yaml:"progress-mode"`
-	Concurrent           int     `yaml:"concurrent"`
-	AliveConcurrent      int     `yaml:"alive-concurrent"`
-	SpeedConcurrent      int     `yaml:"speed-concurrent"`
-	MediaConcurrent      int     `yaml:"media-concurrent"`
-	EnableIPv6           bool    `yaml:"ipv6"`
+	PrintProgress   bool   `yaml:"print-progress"`
+	ProgressMode    string `yaml:"progress-mode"`
+	Concurrent      int    `yaml:"concurrent"`
+	AliveConcurrent int    `yaml:"alive-concurrent"`
+	SpeedConcurrent int    `yaml:"speed-concurrent"`
+	MediaConcurrent int    `yaml:"media-concurrent"`
+	EnableIPv6      bool   `yaml:"ipv6"`
+	// 节点检测自定义 DNS 配置
+	NameServer            []string `yaml:"nameserver"`
+	ProxyServerNameserver []string `yaml:"proxy-server-nameserver"`
+
 	CheckInterval        int     `yaml:"check-interval"`
 	CronExpression       string  `yaml:"cron-expression"`
 	Timeout              int     `yaml:"timeout"`

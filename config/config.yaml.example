@@ -42,6 +42,20 @@ media-concurrent: 100
 # 是否启用IPv6，默认禁用
 ipv6: false
 
+# 节点检测自定义 DNS 配置
+# 留空表示使用默认系统解析
+nameserver:
+  - 114.114.114.114 # default value
+  - 8.8.8.8 # default value
+  - tls://223.5.5.5:853 # DNS over TLS
+  - https://doh.pub/dns-query # DNS over HTTPS
+  - https://dns.alidns.com/dns-query#h3=true # 强制 HTTP/3，与
+
+# 专用于节点域名解析的 DNS 服务器，非必要配置项，如果不填则遵循nameserver-policy、nameserver和fallback的配置
+proxy-server-nameserver:
+  - https://dns.alidns.com/dns-query
+  - 8.8.8.8
+
 # 超时时间(毫秒)(节点的最大延迟)，主要影响测活任务
 timeout: 6000
 
