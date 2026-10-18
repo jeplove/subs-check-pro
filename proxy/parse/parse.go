@@ -267,7 +267,8 @@ func ExtractClashProviderURLs(m map[string]any) []string {
 			}
 			if u, ok := pm["url"].(string); ok {
 				u = strings.TrimSpace(u)
-				if u != "" {
+				// -> 增加 DoH / DNS 过滤逻辑 <-
+				if u != "" && !IsIgnoredURL(u) {
 					out = append(out, u)
 				}
 			}

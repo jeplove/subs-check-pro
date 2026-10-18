@@ -642,13 +642,13 @@ func fetchRemoteSubUrls(listURL string) ([]string, error) {
 	if listURL == "" {
 		return nil, errors.New("远程列表为空")
 	}
-	data, err := FetchSubsData(listURL)
+	data, err := FetchSubsData(listURL) // 假设已存在
 	if err != nil {
 		return nil, err
 	}
 
 	// 1) 优先尝试解析为对象形式 (sub-urls: [...])
-	var obj SubUrls
+	var obj SubUrls // 假设已定义
 	if err := yaml.Unmarshal(data, &obj); err == nil && len(obj.SubUrls) > 0 {
 		return obj.SubUrls, nil
 	}
@@ -690,7 +690,10 @@ func fetchRemoteSubUrls(listURL string) ([]string, error) {
 		if parsed, perr := url.Parse(line); perr == nil {
 			scheme := strings.ToLower(parsed.Scheme)
 			if (scheme == "http" || scheme == "https") && parsed.Host != "" {
-				res = append(res, line)
+				// -> 增加 DoH / DNS 过滤逻辑 <-
+				if !parse.IsIgnoredURL(line) {
+					res = append(res, line)
+				}
 			}
 		}
 	}

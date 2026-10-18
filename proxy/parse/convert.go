@@ -1237,6 +1237,12 @@ func ExtractMarkdownURLs(data []byte) []string {
 		if _, ok := seen[u]; ok {
 			return
 		}
+
+		// -> 增加 DoH / DNS 过滤逻辑 <-
+		if IsIgnoredURL(u) {
+			return
+		}
+
 		if parsed, err := url.Parse(u); err == nil && parsed.Host != "" {
 			seen[u] = struct{}{}
 			out = append(out, u)
