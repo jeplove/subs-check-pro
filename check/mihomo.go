@@ -35,7 +35,7 @@ func SetupMihomoDNS() {
 	resolver.ProxyServerHostResolver = fallbackResolvers.Resolver
 
 	// 1. 固化 DefaultNameserver (兜底解析 DoH 等基础域名)
-	defaults := []string{"114.114.114.114", "223.5.5.5", "8.8.8.8", "1.0.0.1"}
+	defaults := []string{"114.114.114.114", "223.5.5.5", "8.8.8.8", "1.0.0.1", "1.1.8.8"}
 
 	if parsedDefaults, err := dns.ParseNameServer(defaults); err == nil {
 		cfg.Default = parsedDefaults
