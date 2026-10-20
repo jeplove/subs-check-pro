@@ -634,13 +634,31 @@ func (e *LoonEngine) Execute(execCtx context.Context, req *LoonHTTPRequest, argu
 					slog.Debug("脚本底层 DNS 解析失败", "domain", opts.Domain, "server", opts.Server, "err", errStr)
 				} else {
 					var answers []DnsAnswer
+					var ipv4Addrs []string
+					hasIPv6 := false
+
 					for _, a := range addrs {
 						typ := "A"
 						if a.Is6() {
 							typ = "AAAA"
+							hasIPv6 = true
+						} else {
+							// 收集所有 IPv4 地址，为后续的降级兼容做准备
+							ipv4Addrs = append(ipv4Addrs, a.String())
 						}
 						answers = append(answers, DnsAnswer{Type: typ, Value: a.String()})
 					}
+
+					// 兼容 NATMap IP4P 场景：
+					// 用户为了开启 IP4P 转换，会在 Sub-Store 中将解析类型强制设为 IPv6。
+					// 此时为了防止普通的纯 IPv4 节点因为找不到 AAAA 记录而解析报错，
+					// 主动将得到的 IPv4 结果伪装成 AAAA 记录追加到末尾，作为 Fallback 让 JS 顺利提取。
+					if !hasIPv6 {
+						for _, ip := range ipv4Addrs {
+							answers = append(answers, DnsAnswer{Type: "AAAA", Value: ip})
+						}
+					}
+
 					resObj.Response = &DnsResponse{Answers: answers}
 				}
 

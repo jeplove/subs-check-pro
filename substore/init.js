@@ -44,6 +44,28 @@ const console = {
     error: function (...args) { __throttled_log("error", ...args); }
 };
 
+// 拦截严格过滤，使 Sub-Store 平滑接受降级的 IPv4 记录
+const _originalFilter = Array.prototype.filter;
+Array.prototype.filter = function (fn) {
+    if (this.length > 0) {
+        let first = this[0];
+        // 探测是不是 DNS answers 数组 { name, type, data/value, ... }
+        if (first && typeof first === 'object' && ('type' in first) && (('data' in first) || ('value' in first))) {
+            let fnStr = fn.toString();
+            // 命中 ResolveDomainOperator 中的 `i?.type === answerType` 严格过滤
+            if (fnStr.indexOf('.type') !== -1 && fnStr.indexOf('===') !== -1) {
+                let strictRes = _originalFilter.call(this, fn);
+                if (strictRes.length > 0) return strictRes; // 如果有 AAAA 记录，优先使用 AAAA
+                // 如果严格匹配不到 (说明只有 A 记录)，放行 A 记录进行向下兼容
+                return _originalFilter.call(this, function (i) {
+                    return i?.type === 'A' || i?.type === 1 || i?.type === 'AAAA' || i?.type === 28;
+                });
+            }
+        }
+    }
+    return _originalFilter.call(this, fn);
+};
+
 // JS 侧的无损二进制/Base64转换器
 const _b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const _b64tab = new Uint8Array(256);
@@ -107,6 +129,126 @@ let __http_req_id = 0;
         }
 
         let reqId = "req_" + (++__http_req_id);
+
+        // DoH 解析如果 AAAA 无结果，自动回退请求 A
+        let originalCallback = callback;
+        let isDoH = false, isAAAA = false, isJSONDoH = false;
+        let dohMethod = method.toUpperCase();
+        let queryBuf = null;
+
+        // 探测 Ali / Tencent 的 JSON DoH 请求格式
+        if (req.url && req.url.indexOf('223.6.6.6/resolve') !== -1 && req.url.indexOf('type=AAAA') !== -1) {
+            isJSONDoH = 'ali';
+        } else if (req.url && req.url.indexOf('119.28.28.28/d') !== -1 && req.url.indexOf('type=AAAA') !== -1) {
+            isJSONDoH = 'tencent';
+        } else {
+            // 探测主流二进制 DoH (Google, Cloudflare, Custom DNS)
+            let accept = req.headers && (req.headers['accept'] || req.headers['Accept']);
+            let ctype = req.headers && (req.headers['content-type'] || req.headers['Content-Type']);
+            if (accept === 'application/dns-message' || ctype === 'application/dns-message' || (typeof req.url === 'string' && req.url.indexOf('dns-query') !== -1)) {
+                isDoH = true;
+            }
+        }
+
+        if (isDoH) {
+            // 解析出原始的二进制 DNS Query Buffer 判断是否是请求 IPv6 (QTYPE=28)
+            if (dohMethod === 'GET') {
+                let match = req.url.match(/[\?&]dns=([^&]+)/);
+                if (match) {
+                    let b64url = match[1];
+                    let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+                    while (b64.length % 4) b64 += '=';
+                    queryBuf = __base64_to_uint8array(b64);
+                }
+            } else if (dohMethod === 'POST' && req.body) {
+                if (req["body-base64"]) {
+                    queryBuf = __base64_to_uint8array(req.body);
+                } else if (typeof req.body === 'string') {
+                    queryBuf = __base64_to_uint8array(req.body);
+                }
+            }
+            if (queryBuf && queryBuf.length > 12) {
+                let offset = 12;
+                while (offset < queryBuf.length) {
+                    let len = queryBuf[offset];
+                    if (len === 0) { offset++; break; }
+                    if ((len & 0xC0) === 0xC0) { offset += 2; break; }
+                    offset += len + 1;
+                }
+                if (offset + 4 <= queryBuf.length) {
+                    let qtype = (queryBuf[offset] << 8) | queryBuf[offset + 1];
+                    if (qtype === 28) isAAAA = true;
+                }
+            }
+        }
+
+        // 接管回调并评估是否需要回退
+        if ((isDoH && isAAAA) || isJSONDoH) {
+            callback = function (err, resp, body) {
+                let needsFallback = false;
+                if (!err && resp && body) {
+                    if (isJSONDoH === 'ali') {
+                        let strBody = typeof body === 'string' ? body : (typeof Buffer !== 'undefined' ? Buffer.from(body).toString() : String.fromCharCode.apply(null, body));
+                        try {
+                            let arr = JSON.parse(strBody);
+                            if (!Array.isArray(arr) || arr.length === 0) needsFallback = true;
+                        } catch (e) { }
+                    } else if (isJSONDoH === 'tencent') {
+                        let strBody = typeof body === 'string' ? body : (typeof Buffer !== 'undefined' ? Buffer.from(body).toString() : String.fromCharCode.apply(null, body));
+                        let arr = strBody.split(';').map(i => i.split(',')[0]).filter(i => i && i !== '0');
+                        if (arr.length === 0) needsFallback = true;
+                    } else if (isDoH && isAAAA) {
+                        let u8 = (body instanceof Uint8Array) ? body : ((typeof Buffer !== 'undefined' && Buffer.isBuffer(body)) ? new Uint8Array(body) : null);
+                        // 通过 DNS 包头验证 ANCOUNT(Answer) 字段是否为 0
+                        if (u8 && u8.length >= 12) {
+                            let ancount = (u8[6] << 8) | u8[7];
+                            if (ancount === 0) needsFallback = true;
+                        }
+                    }
+                }
+
+                if (needsFallback && originalCallback) {
+                    let newReq = Object.assign({}, req);
+                    if (isJSONDoH) {
+                        // JSON 请求改写参数为 IPv4 (A)
+                        newReq.url = req.url.replace('type=AAAA', 'type=A');
+                    } else if (isDoH && isAAAA && queryBuf) {
+                        // 二进制请求改写 DNS Buffer 为 IPv4 (QTYPE 1)
+                        let newQueryBuf = new Uint8Array(queryBuf.length);
+                        newQueryBuf.set(queryBuf);
+                        let offset = 12;
+                        while (offset < newQueryBuf.length) {
+                            let len = newQueryBuf[offset];
+                            if (len === 0) { offset++; break; }
+                            if ((len & 0xC0) === 0xC0) { offset += 2; break; }
+                            offset += len + 1;
+                        }
+                        if (offset + 4 <= newQueryBuf.length) {
+                            newQueryBuf[offset] = 0;
+                            newQueryBuf[offset + 1] = 1; // 修改为查询 A 记录
+                        }
+
+                        if (dohMethod === 'GET') {
+                            let b64 = __uint8array_to_base64(newQueryBuf);
+                            let b64url = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+                            newReq.url = req.url.replace(/([\?&]dns=)[^&]+/, '$1' + b64url);
+                        } else if (dohMethod === 'POST') {
+                            newReq.body = __uint8array_to_base64(newQueryBuf);
+                            newReq["body-base64"] = true;
+                        }
+                    }
+
+                    // 无缝发起二次请求 (退避重试)
+                    let fallbackReqId = "req_" + (++__http_req_id);
+                    __http_callbacks[fallbackReqId] = originalCallback;
+                    __go_http_request_async(method.toUpperCase(), JSON.stringify(newReq), fallbackReqId);
+                    return;
+                }
+
+                if (originalCallback) originalCallback(err, resp, body);
+            };
+        }
+
         if (callback) { __http_callbacks[reqId] = callback; }
         __go_http_request_async(method.toUpperCase(), JSON.stringify(req), reqId);
     };
