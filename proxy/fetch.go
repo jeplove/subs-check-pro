@@ -341,8 +341,8 @@ func FetchSubsData(rawURL string) ([]byte, error) {
 
 	// UA 列表池
 	uaList := []string{
-		convert.RandUserAgent(),
 		"mihomo/1.19.27",
+		convert.RandUserAgent(),
 		"v2ray",
 		"sing-box/1.13.0",
 		"ClashMetaForAndroid/2.11.30",
