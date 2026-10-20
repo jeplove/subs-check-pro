@@ -449,7 +449,7 @@ func FetchSubsData(rawURL string) ([]byte, error) {
 }
 
 // fallbackDNS 系统 DNS 解析失败时使用的备用 DNS（UDP 53）：阿里、腾讯。
-var fallbackDNS = []string{"223.5.5.5:53", "119.29.29.29:53"}
+var fallbackDNS = []string{"223.5.5.5:53", "114.114.114.114:53", "1.1.8.8:53"}
 
 // lookupViaServers 并发向所有备用 DNS 查询，返回最先得到的结果；整体最多等 3 秒。
 func lookupViaServers(ctx context.Context, host string, servers []string) []string {
