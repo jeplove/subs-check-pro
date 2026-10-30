@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/netip"
 	"net/url"
 	"os"
 	"runtime"
@@ -359,7 +361,6 @@ func (e *LoonEngine) Execute(execCtx context.Context, req *LoonHTTPRequest, argu
 				}()
 
 				res := GoResult{}
-				var bodyReader io.Reader
 
 				var bodyStr string
 				if opts.Body != nil {
@@ -373,119 +374,300 @@ func (e *LoonEngine) Execute(execCtx context.Context, req *LoonHTTPRequest, argu
 					}
 				}
 
-				if bodyStr != "" {
-					if opts.BodyB64 || opts.BodyBase64 {
-						if decoded, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
-							bodyReader = bytes.NewReader(decoded)
-						} else {
-							bodyReader = strings.NewReader(bodyStr)
-						}
-					} else {
-						bodyReader = strings.NewReader(bodyStr)
-					}
-				}
-
 				// 提升默认超时时间以应对 Gist 备份大文件
 				timeoutMs := 60000
 				if opts.Timeout > 0 {
 					timeoutMs = min(opts.Timeout, 300000)
 				}
+
+				// 针对 DNS 请求强行保底 8 秒
+				isDnsReq := strings.Contains(opts.URL, "dns-query") || strings.Contains(opts.URL, "resolve")
+				if isDnsReq && timeoutMs < 8000 {
+					timeoutMs = 8000
+				}
 				reqCtx, cancel := context.WithTimeout(execCtx, time.Duration(timeoutMs)*time.Millisecond)
 				defer cancel()
 
-				httpReq, err := http.NewRequestWithContext(reqCtx, method, opts.URL, bodyReader)
-				if err != nil {
-					errStr := err.Error()
-					res.Error = &errStr
-				} else {
-					// 强制方法大写，防止严格网关拒绝小写方法 (如 patch)
-					httpReq.Method = strings.ToUpper(httpReq.Method)
+				client := e.httpClient
+				shouldRedirect := true
+				if opts.AutoRedirect != nil {
+					shouldRedirect = *opts.AutoRedirect
+				} else if opts.Redirection != nil {
+					shouldRedirect = *opts.Redirection
+				}
+				if !shouldRedirect {
+					clientCopy := *client
+					clientCopy.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+						return http.ErrUseLastResponse
+					}
+					client = &clientCopy
+				}
+
+				canRetry := strings.EqualFold(method, "GET") && bodyStr == ""
+				if isDnsReq {
+					canRetry = true
+				}
+
+				// 提前声明变量，避免 for 循环内部作用域和赋值报错
+				var httpReq *http.Request
+				var httpResp *http.Response
+				var timing *netTiming
+				var err error
+
+				// 支持自动拦截 429/50x 错误并退避重试
+				for attempt := range 3 {
+					if attempt > 0 {
+						select {
+						case <-time.After(time.Duration(attempt*500) * time.Millisecond):
+						case <-reqCtx.Done():
+						}
+						if reqCtx.Err() != nil {
+							break
+						}
+					}
+
+					var currentReader io.Reader
+					if bodyStr != "" {
+						if opts.BodyB64 || opts.BodyBase64 {
+							if decoded, e := base64.StdEncoding.DecodeString(bodyStr); e == nil {
+								currentReader = bytes.NewReader(decoded)
+							} else {
+								currentReader = strings.NewReader(bodyStr)
+							}
+						} else {
+							currentReader = strings.NewReader(bodyStr)
+						}
+					}
+
+					httpReq, err = http.NewRequestWithContext(reqCtx, method, opts.URL, currentReader)
+					if err != nil {
+						break
+					}
+					httpReq.Method = strings.ToUpper(method)
 
 					for k, v := range opts.Headers {
-						// 拦截 Accept-Encoding / Content-Length 强制开启 Go 内部自动 Gzip/Brotli 压缩处理
 						if strings.EqualFold(k, "Accept-Encoding") || strings.EqualFold(k, "Content-Length") {
 							continue
 						}
 						httpReq.Header.Set(k, v)
 					}
 
-					var timing *netTiming
 					if e.netDebug {
 						timing = &netTiming{start: time.Now()}
 						httpReq = httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), timing.trace()))
 					}
 
-					client := e.httpClient
-					shouldRedirect := true
-					if opts.AutoRedirect != nil {
-						shouldRedirect = *opts.AutoRedirect
-					} else if opts.Redirection != nil {
-						shouldRedirect = *opts.Redirection
+					httpResp, err = doWithRetry(reqCtx, client, httpReq, canRetry)
+
+					// 如果请求成功但被限流或网关报错，主动拦截并重试
+					if err == nil && httpResp != nil && isDnsReq {
+						code := httpResp.StatusCode
+						if code == 429 || code == 500 || code == 502 || code == 503 || code == 504 {
+							io.Copy(io.Discard, io.LimitReader(httpResp.Body, 4096))
+							httpResp.Body.Close()
+							err = fmt.Errorf("upstream rejected with status %d", code)
+							continue
+						}
 					}
-					if !shouldRedirect {
-						clientCopy := *client
-						clientCopy.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-							return http.ErrUseLastResponse
-						}
-						client = &clientCopy
-					}
-
-					canRetry := strings.EqualFold(method, "GET") && bodyStr == ""
-					httpResp, err := doWithRetry(reqCtx, client, httpReq, canRetry)
-					if timing != nil {
-						timing.total = time.Since(timing.start)
-					}
-
-					if err != nil {
-						errStr := err.Error()
-						res.Error = &errStr
-						slog.Debug("脚本底层网络请求失败", "method", httpReq.Method, "url", opts.URL, "err", errStr)
-						e.logger.Error("脚本底层网络请求失败", "method", httpReq.Method, "url", opts.URL, "err", errStr)
-					} else {
-						defer httpResp.Body.Close()
-						bodyBytes, _ := io.ReadAll(io.LimitReader(httpResp.Body, 64<<20))
-
-						// 状态码异常拦截，记录关键响应体
-						if httpResp.StatusCode >= 400 {
-							snippet := string(bodyBytes)
-							if len(snippet) > 200 {
-								snippet = snippet[:200] + "..."
-							}
-							slog.Debug("API 请求被拒绝", "method", httpReq.Method, "url", opts.URL, "status", httpResp.StatusCode, "response", snippet)
-							e.logger.Error("API 请求被拒绝", "method", httpReq.Method, "url", opts.URL, "status", httpResp.StatusCode, "response", snippet)
-						}
-
-						res.Response = &ResponseObject{
-							Status:  httpResp.StatusCode,
-							Headers: make(map[string]string),
-						}
-						for k, v := range httpResp.Header {
-							res.Response.Headers[strings.ToLower(k)] = v[0]
-						}
-
-						var storeBodyStr string
-						if opts.BinaryMode {
-							storeBodyStr = base64.StdEncoding.EncodeToString(bodyBytes)
-							res.Response.Headers["__is_binary__"] = "true" // 附加元数据标识
-						} else {
-							storeBodyStr = string(bodyBytes)
-						}
-
-						httpBodiesMu.Lock()
-						reqIdCounter++
-						reqId := fmt.Sprintf("req-%d", reqIdCounter)
-						httpBodies[reqId] = storeBodyStr
-						httpBodiesMu.Unlock()
-
-						res.ReqId = reqId
-					}
+					break
 				}
+
+				if timing != nil && timing.start.Unix() > 0 {
+					timing.total = time.Since(timing.start)
+				}
+
+				if err != nil {
+					errStr := err.Error()
+					res.Error = &errStr
+					slog.Debug("脚本底层网络请求失败", "method", method, "url", opts.URL, "err", errStr)
+				} else {
+					defer httpResp.Body.Close()
+					bodyBytes, _ := io.ReadAll(io.LimitReader(httpResp.Body, 64<<20))
+
+					if httpResp.StatusCode >= 400 {
+						snippet := string(bodyBytes)
+						if len(snippet) > 200 {
+							snippet = snippet[:200] + "..."
+						}
+						slog.Debug("API 请求被拒绝", "status", httpResp.StatusCode, "response", snippet)
+						e.logger.Error("API 请求被拒绝", "method", httpReq.Method, "url", opts.URL, "status", httpResp.StatusCode, "response", snippet)
+					}
+
+					res.Response = &ResponseObject{
+						Status:  httpResp.StatusCode,
+						Headers: make(map[string]string),
+					}
+					for k, v := range httpResp.Header {
+						res.Response.Headers[strings.ToLower(k)] = v[0]
+					}
+
+					// 只有明确指定或响应了 DNS/二进制 类型才走 Base64
+					isBinary := opts.BinaryMode || opts.BodyB64 || opts.BodyBase64
+					if !isBinary {
+						accept := strings.ToLower(httpReq.Header.Get("Accept"))
+						if strings.Contains(accept, "application/dns-message") {
+							isBinary = true
+						} else {
+							for _, v := range httpResp.Header["Content-Type"] {
+								lowerV := strings.ToLower(v)
+								if strings.Contains(lowerV, "application/dns-message") ||
+									strings.Contains(lowerV, "application/octet-stream") ||
+									strings.Contains(lowerV, "application/x-protobuf") {
+									isBinary = true
+									break
+								}
+							}
+						}
+					}
+
+					var storeBodyStr string
+					if isBinary {
+						storeBodyStr = base64.StdEncoding.EncodeToString(bodyBytes)
+						res.Response.Headers["__is_binary__"] = "true"
+					} else {
+						storeBodyStr = string(bodyBytes)
+					}
+
+					httpBodiesMu.Lock()
+					reqIdCounter++
+					reqId := fmt.Sprintf("req-%d", reqIdCounter)
+					httpBodies[reqId] = storeBodyStr
+					httpBodiesMu.Unlock()
+
+					res.ReqId = reqId
+				}
+
 				resBytes, _ := json.Marshal(res)
 				resLiteral, _ := json.Marshal(string(resBytes))
 				ctx.Schedule(func(inner *quickjs.Context) {
 					dispatchCode := fmt.Sprintf(`__dispatch_http_response("%s", %s);`, jsReqId, resLiteral)
-					resVal := inner.Eval(dispatchCode)
-					resVal.Free()
+					inner.Eval(dispatchCode).Free()
+				})
+			}()
+			return ctx.Undefined()
+		}))
+
+		globals.Set("__go_dns_query_async", ctx.NewFunction(func(ctx *quickjs.Context, this *quickjs.Value, args []*quickjs.Value) *quickjs.Value {
+			if len(args) < 2 {
+				return ctx.Undefined()
+			}
+			optsJson, jsReqId := args[0].String(), args[1].String()
+
+			type DnsOptions struct {
+				Domain  string `json:"domain"`
+				Server  string `json:"server"`
+				Timeout int    `json:"timeout"`
+			}
+			var opts DnsOptions
+			if err := json.Unmarshal([]byte(optsJson), &opts); err != nil {
+				slog.Debug("脚本底层解析 DNS 参数失败", "err", err, "reqId", jsReqId)
+				e.logger.Error("脚本底层解析 DNS 参数失败", "err", err, "reqId", jsReqId)
+			}
+
+			go func() {
+				// 防范底层网络崩溃
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Debug("脚本底层 DNS 网络协程崩溃 (已拦截)", "domain", opts.Domain, "panic", r)
+						e.logger.Error("脚本底层 DNS 网络协程崩溃 (已拦截)", "domain", opts.Domain, "panic", r)
+					}
+				}()
+
+				timeoutMs := 8000
+				if opts.Timeout > 0 {
+					timeoutMs = opts.Timeout
+				}
+				reqCtx, cancel := context.WithTimeout(execCtx, time.Duration(timeoutMs)*time.Millisecond)
+				defer cancel()
+
+				var addrs []netip.Addr
+				var err error
+
+				server := strings.TrimSpace(opts.Server)
+				// 如果未指定或者指定为当前环境默认，直接复用 loon_net.go 中健壮的 sharedResolver
+				if server == "" || strings.EqualFold(server, "system") || strings.EqualFold(server, "auto") {
+					addrs, _, err = sharedResolver.lookup(reqCtx, opts.Domain)
+				} else {
+					// 剥离可能传下来的协议前缀，兼容直接传入特殊 Custom DNS 的情况
+					server = strings.TrimPrefix(server, "quic://")
+					server = strings.TrimPrefix(server, "h3://")
+					server = strings.TrimPrefix(server, "udp://")
+					server = strings.TrimPrefix(server, "tcp://")
+					server = strings.TrimPrefix(server, "tls://")
+
+					// 确保具备端口信息
+					if _, _, e := net.SplitHostPort(server); e != nil {
+						if ip, e := netip.ParseAddr(server); e == nil {
+							server = netip.AddrPortFrom(ip, 53).String()
+						} else {
+							server = net.JoinHostPort(server, "53")
+						}
+					}
+
+					// 构造针对特定自定义服务器的 Resolver (直接复用 loon_net.go 中定义好的 dialer 和 lookupDual)
+					res := &net.Resolver{
+						PreferGo: true,
+						Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+							return dialer.DialContext(ctx, network, server)
+						},
+					}
+					addrs, err = lookupDual(reqCtx, res, opts.Domain)
+				}
+
+				// 定义完全符合 Sub-Store JS (Loon 接口格式) 要求的响应体格式
+				type DnsAnswer struct {
+					Type  string `json:"type"`
+					Value string `json:"value"`
+				}
+				type DnsResponse struct {
+					Answers []DnsAnswer `json:"answers"`
+				}
+				type DnsResult struct {
+					Error    *string      `json:"error"`
+					Response *DnsResponse `json:"response"`
+				}
+
+				resObj := DnsResult{}
+				if err != nil {
+					errStr := err.Error()
+					resObj.Error = &errStr
+					slog.Debug("脚本底层 DNS 解析失败", "domain", opts.Domain, "server", opts.Server, "err", errStr)
+				} else {
+					var answers []DnsAnswer
+					var ipv4Addrs []string
+					hasIPv6 := false
+
+					for _, a := range addrs {
+						typ := "A"
+						if a.Is6() {
+							typ = "AAAA"
+							hasIPv6 = true
+						} else {
+							// 收集所有 IPv4 地址，为后续的降级兼容做准备
+							ipv4Addrs = append(ipv4Addrs, a.String())
+						}
+						answers = append(answers, DnsAnswer{Type: typ, Value: a.String()})
+					}
+
+					// 兼容 NATMap IP4P 场景：
+					// 用户为了开启 IP4P 转换，会在 Sub-Store 中将解析类型强制设为 IPv6。
+					// 此时为了防止普通的纯 IPv4 节点因为找不到 AAAA 记录而解析报错，
+					// 主动将得到的 IPv4 结果伪装成 AAAA 记录追加到末尾，作为 Fallback 让 JS 顺利提取。
+					if !hasIPv6 {
+						for _, ip := range ipv4Addrs {
+							answers = append(answers, DnsAnswer{Type: "AAAA", Value: ip})
+						}
+					}
+
+					resObj.Response = &DnsResponse{Answers: answers}
+				}
+
+				resBytes, _ := json.Marshal(resObj)
+				resLiteral, _ := json.Marshal(string(resBytes))
+
+				ctx.Schedule(func(inner *quickjs.Context) {
+					dispatchCode := fmt.Sprintf(`__dispatch_dns_response("%s", %s);`, jsReqId, resLiteral)
+					inner.Eval(dispatchCode).Free()
 				})
 			}()
 			return ctx.Undefined()

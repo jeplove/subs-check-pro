@@ -42,6 +42,27 @@ media-concurrent: 100
 # 是否启用IPv6，默认禁用
 ipv6: false
 
+# 节点检测自定义 DNS 配置
+# 留空表示使用默认系统解析
+nameserver:
+  - 114.114.114.114 # default value
+  - 8.8.8.8 # default value
+  - tls://223.5.5.5:853 # DNS over TLS
+  - https://doh.pub/dns-query # DNS over HTTPS
+  - https://dns.alidns.com/dns-query#h3=true
+
+# 专用于节点域名解析的 DNS 服务器，非必要配置项，如果不填则遵循nameserver-policy、nameserver和fallback的配置
+proxy-server-nameserver:
+  - https://dns.alidns.com/dns-query
+  - 8.8.8.8
+
+proxy-server-nameserver-policy:
+  +.local: system
+  +.baidu.com: 223.5.5.5
+  +.cloudflre.com: 1.1.1.1
+  +.github.com: 223.5.5.5
+  +.githubusercontent.com: 223.5.5.5
+
 # 超时时间(毫秒)(节点的最大延迟)，主要影响测活任务
 timeout: 6000
 
@@ -181,8 +202,11 @@ sub-process:
     cache: enable
     # 缓存时长(秒)
     cache-ttl: 3600
+    custom-url: ''
+
   # 开启节点裂变（将多 IP 展开为独立节点）
   node-split: false
+
   # 注入订阅流量信息节点
   sub-info: false
 
@@ -503,9 +527,6 @@ sub-urls:
   # - 'https://example.com/sub2.txt'
   # - 'https://example.com/sub?token=43fa8f0dc9bb00dcfec2afb21b14378a'
   # - 'https://example.com/sub?token=43fa8f0dc9bb00dcfec2afb21b14378a?flag=clash.meta'
-  # - 'https://raw.githubusercontent.com/example/repo/main/config/{Ymd}.yaml'
-  # - 'https://raw.githubusercontent.com/example/repo/main/daily/daily-{Y}-{mm}-{d}.yaml'
-  # - 'https://example.com/sub.txt#我是备注'
   - 'https://free.datiya.com/uploads/{Ymd}-clash.yaml'
   - 'https://node.freeclashnode.com/uploads/{Y}/{mm}/0-{Ymd}.yaml'
   - 'https://node.freeclashnode.com/uploads/{Y}/{mm}/1-{Ymd}.yaml'

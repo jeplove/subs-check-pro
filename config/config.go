@@ -14,6 +14,7 @@ type SingBoxConfig struct {
 type ResolveDomainConfig struct {
 	Enable      bool   `yaml:"enable"`
 	Provider    string `yaml:"provider"`
+	CustomURL   string `mapstructure:"custom-url" yaml:"custom-url"`
 	Type        string `yaml:"type"`
 	Cache       string `yaml:"cache"`
 	CacheTTL    int    `yaml:"cache-ttl"`
@@ -48,13 +49,19 @@ type SubProcessConfig struct {
 }
 
 type Config struct {
-	PrintProgress        bool    `yaml:"print-progress"`
-	ProgressMode         string  `yaml:"progress-mode"`
-	Concurrent           int     `yaml:"concurrent"`
-	AliveConcurrent      int     `yaml:"alive-concurrent"`
-	SpeedConcurrent      int     `yaml:"speed-concurrent"`
-	MediaConcurrent      int     `yaml:"media-concurrent"`
-	EnableIPv6           bool    `yaml:"ipv6"`
+	PrintProgress   bool   `yaml:"print-progress"`
+	ProgressMode    string `yaml:"progress-mode"`
+	Concurrent      int    `yaml:"concurrent"`
+	AliveConcurrent int    `yaml:"alive-concurrent"`
+	SpeedConcurrent int    `yaml:"speed-concurrent"`
+	MediaConcurrent int    `yaml:"media-concurrent"`
+	EnableIPv6      bool   `yaml:"ipv6"`
+	// 节点检测自定义 DNS 配置
+	NameServer            []string `yaml:"nameserver"`
+	ProxyServerNameserver []string `yaml:"proxy-server-nameserver"`
+	// 专用于解析节点域名的策略
+	ProxyServerNameserverPolicy map[string]any `mapstructure:"proxy-server-nameserver-policy" yaml:"proxy-server-nameserver-policy" json:"proxy-server-nameserver-policy"`
+
 	CheckInterval        int     `yaml:"check-interval"`
 	CronExpression       string  `yaml:"cron-expression"`
 	Timeout              int     `yaml:"timeout"`

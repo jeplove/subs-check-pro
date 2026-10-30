@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/ratelimit"
 	"github.com/metacubex/mihomo/adapter"
-	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/oschwald/maxminddb-golang/v2"
 	"github.com/samber/lo"
@@ -456,6 +455,19 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 		args = append(args, "success-rate", r)
 	}
 
+	enableIPv6 := config.GlobalConfig.EnableIPv6
+
+	args = append(args, "ipv6", enableIPv6)
+
+	// 设置 mihomo 变量及注入全局自定义 DNS
+	SetupMihomoDNS()
+
+	hasCustomDNS := len(config.GlobalConfig.NameServer) > 0 || len(config.GlobalConfig.ProxyServerNameserver) > 0 || len(config.GlobalConfig.ProxyServerNameserverPolicy) > 0
+
+	if hasCustomDNS {
+		args = append(args, "custom-dns", hasCustomDNS)
+	}
+
 	// 最终日志调用
 	slog.Info("当前参数", args...)
 
@@ -503,9 +515,6 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, []map[string]an
 			}
 		}
 	}()
-
-	// 启动流水线任务前设置 mihomo 变量
-	resolver.DisableIPv6 = !config.GlobalConfig.EnableIPv6
 
 	CurrentStepName.Store("进度")
 
