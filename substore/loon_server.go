@@ -2,6 +2,7 @@
 package substore
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,11 @@ import (
 	"github.com/sinspired/subs-check-pro/v3/config"
 )
 
+type cachedResponse struct {
+	resp      *LoonHTTPResponse
+	expiresAt time.Time
+}
+
 // LoonServer 现在只持有单个 engine
 // engine 用 atomic.Pointer 存放，支持资产更新后不重启进程即可热替换。
 type LoonServer struct {
@@ -37,6 +43,9 @@ type LoonServer struct {
 	// inflight 用于并发请求合并：多个相同的订阅请求只会触发一次底层的脚本执行
 	inflightMu sync.Mutex
 	inflight   map[string]*inflightCall
+
+	// 结果缓存器
+	responseCache sync.Map
 }
 
 type inflightCall struct {
@@ -55,10 +64,34 @@ func NewLoonServer(addr string, engine *LoonEngine, frontendDir, backendPath str
 		inflight:    make(map[string]*inflightCall),
 	}
 	s.engine.Store(engine)
+	go s.cleanupResponseCache()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handle)
-	s.httpServer = &http.Server{Addr: addr, Handler: mux}
+	s.httpServer = &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
 	return s
+}
+
+func (s *LoonServer) cleanupResponseCache() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.baseCtx.Done():
+			return
+		case now := <-ticker.C:
+			s.responseCache.Range(func(k, v any) bool {
+				if cached, ok := v.(cachedResponse); ok && now.After(cached.expiresAt) {
+					s.responseCache.Delete(k)
+				}
+				return true
+			})
+		}
+	}
 }
 
 // UpdateEngine 用新引擎原子替换旧引擎，旧引擎里尚未完成的请求继续用旧的执行
@@ -69,16 +102,12 @@ func (s *LoonServer) UpdateEngine(e *LoonEngine) {
 func (s *LoonServer) handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
-	// 预检请求里声明了什么头就放行什么头：通过官方前端 https://sub-store.vercel.app
-	// 填写本后端地址使用时，浏览器可能携带额外的自定义请求头，写死白名单会被预检拒绝。
 	allowHeaders := "Origin, X-Requested-With, Content-Type, Accept, Authorization"
 	if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
 		allowHeaders = reqHeaders
 	}
 	w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
 	if r.Method == http.MethodOptions {
-		// Chrome 的私有网络访问(PNA)：公网页面(官方前端)访问局域网/本机后端时，
-		// 预检会带 Access-Control-Request-Private-Network，必须明确回应才会放行。
 		if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
 			w.Header().Set("Access-Control-Allow-Private-Network", "true")
 		}
@@ -101,6 +130,11 @@ func (s *LoonServer) handle(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/download/") {
 			isBackend = true
 		}
+	}
+
+	// 规则 C：全局拦截 /share/ 和 /download/
+	if strings.HasPrefix(path, "/share/") || strings.HasPrefix(path, "/download/") {
+		isBackend = true
 	}
 
 	if isBackend {
@@ -135,7 +169,7 @@ func (s *LoonServer) handleBackend(w http.ResponseWriter, r *http.Request) {
 		scheme = "https"
 	}
 
-	// 3. 构造完整 URL：依赖真实请求的 r.Host
+	// 构造完整 URL：依赖真实请求的 r.Host
 	fullURL := scheme + "://" + r.Host + strippedPath
 	if r.URL.RawQuery != "" {
 		fullURL += "?" + r.URL.RawQuery
@@ -148,30 +182,35 @@ func (s *LoonServer) handleBackend(w http.ResponseWriter, r *http.Request) {
 		Body:    string(bodyBytes),
 	}
 
-	// 4. 处理跨域 Origin 标识
+	// 处理跨域 Origin 标识
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		origin = scheme + "://" + r.Host
 	}
 	argument := "cors=" + url.QueryEscape(origin)
 
-	// /download/* 是幂等的只读请求：脚本执行与客户端连接解耦并合并并发请求。
-	// /api/utils/backup 和 /api/sync/artifacts 等云同步操作也解耦，保证即使前端超时断开，后台也能完整跑完备份逻辑。
-	detach := (r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodPost) &&
-		(strings.HasPrefix(strippedPath, "/download/") ||
-			strings.HasPrefix(strippedPath, "/api/utils/backup") ||
-			strings.HasPrefix(strippedPath, "/api/sync/artifacts"))
+	isReadMethod := r.Method == http.MethodGet || r.Method == http.MethodHead
+	isDownloadOrFile := strings.HasPrefix(strippedPath, "/download/") ||
+		strings.HasPrefix(strippedPath, "/share/") ||
+		strings.HasPrefix(strippedPath, "/api/file/")
+	isSyncAction := strings.HasPrefix(strippedPath, "/api/utils/backup") ||
+		strings.HasPrefix(strippedPath, "/api/sync/artifacts")
+
+	detach := (isReadMethod || r.Method == http.MethodPost) && (isDownloadOrFile || isSyncAction)
+	// 仅对幂等只读下载/文件查询启用短效缓存，避免 POST 或备份/同步指令命中旧缓存
+	cacheable := isReadMethod && isDownloadOrFile
 
 	var resp *LoonHTTPResponse
 	if detach {
-		// 加上 UA 做特征，确保生成不同客户端对应的订阅时不冲突
 		key := r.Method + "|" + fullURL + "|" + r.Header.Get("User-Agent") + "|" + argument
-		resp, err = s.executeDetached(r.Context(), key, req, argument)
+		if r.Method == http.MethodPost {
+			key += "|" + req.Body
+		}
+		resp, err = s.executeDetached(r.Context(), key, req, argument, cacheable)
 	} else {
 		resp, err = s.engine.Load().Execute(r.Context(), req, argument)
 	}
 	if err != nil {
-		// 客户端已经断开：不是服务端错误，连接也已不可写，安静返回即可。
 		if r.Context().Err() != nil {
 			slog.Debug("Sub-Store 请求被客户端取消", "url", fullURL, "reason", r.Context().Err())
 			return
@@ -187,10 +226,12 @@ func (s *LoonServer) handleBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyOut := resp.Body
+
 	// 环境变量注入
-	if strings.Contains(req.URL, "/api/utils/env") {
+	if strings.HasPrefix(strippedPath, "/api/utils/env") {
 		var envData map[string]any
-		if err := json.Unmarshal([]byte(resp.Body), &envData); err == nil {
+		if err := json.Unmarshal([]byte(bodyOut), &envData); err == nil {
 			if data, ok := envData["data"].(map[string]any); ok {
 				meta, _ := data["meta"].(map[string]any)
 				if meta == nil {
@@ -215,11 +256,9 @@ func (s *LoonServer) handleBackend(w http.ResponseWriter, r *http.Request) {
 				// 注入配置变量
 				envMap["SUB_STORE_FRONTEND_BACKEND_PATH"] = config.GlobalConfig.SubStorePath
 				if config.GlobalConfig.SubStoreSyncCron != "" {
-					// 定时将订阅/文件上传到私有 Gist
 					envMap["SUB_STORE_BACKEND_SYNC_CRON"] = config.GlobalConfig.SubStoreSyncCron
 				}
 				if config.GlobalConfig.SubStoreProduceCron != "" {
-					// 后台定时处理订阅，用于脚本缓存；脚本参数必须开启缓存
 					envMap["SUB_STORE_PRODUCE_CRON"] = config.GlobalConfig.SubStoreProduceCron
 				}
 				if config.GlobalConfig.SubStorePushService != "" {
@@ -229,24 +268,56 @@ func (s *LoonServer) handleBackend(w http.ResponseWriter, r *http.Request) {
 				envMap["SUB_STORE_CORS_ALLOWED_ORIGINS"] = "*"
 
 				if modifiedBody, err := json.Marshal(envData); err == nil {
-					resp.Body = string(modifiedBody)
+					bodyOut = string(modifiedBody)
 				}
 			}
 		}
 	}
 
+	var hasContentEncoding bool
+	var contentType string
 	for k, v := range resp.Headers {
 		if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") {
 			continue
 		}
+		if strings.EqualFold(k, "Content-Encoding") {
+			hasContentEncoding = true
+		}
+		if strings.EqualFold(k, "Content-Type") {
+			contentType = strings.ToLower(v)
+		}
 		w.Header().Set(k, v)
 	}
+
 	status := resp.Status
 	if status == 0 {
 		status = http.StatusOK
 	}
+
+	// 大体积文本/配置响应走 Gzip（跳过本地 cron 回调与已压缩内容）
+	shouldGzip := r.Method != http.MethodHead &&
+		!hasContentEncoding &&
+		len(bodyOut) > 4096 &&
+		strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") &&
+		!strings.Contains(r.UserAgent(), "Subs-Check-Pro-Cron") &&
+		!strings.HasPrefix(contentType, "image/") &&
+		!strings.HasPrefix(contentType, "video/") &&
+		!strings.Contains(contentType, "gzip")
+
+	if shouldGzip {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		w.WriteHeader(status)
+		gz := gzip.NewWriter(w)
+		_, _ = io.WriteString(gz, bodyOut)
+		_ = gz.Close()
+		return
+	}
+
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(resp.Body))
+	if r.Method != http.MethodHead {
+		_, _ = io.WriteString(w, bodyOut)
+	}
 }
 
 func (s *LoonServer) handleFrontend(w http.ResponseWriter, r *http.Request) {
@@ -259,29 +330,30 @@ func (s *LoonServer) handleFrontend(w http.ResponseWriter, r *http.Request) {
 	rel := strings.TrimPrefix(r.URL.Path, "/")
 	requested := filepath.Join(root, filepath.FromSlash(rel))
 	absRequested, err := filepath.Abs(requested)
-	if err != nil || !strings.HasPrefix(absRequested, root) {
+	if err != nil {
+		http.Error(w, "非法路径", http.StatusForbidden)
+		return
+	}
+	relCheck, err := filepath.Rel(root, absRequested)
+	if err != nil || relCheck == ".." || strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
 		http.Error(w, "非法路径", http.StatusForbidden)
 		return
 	}
 
-	// 拦截逻辑：防止逃逸到官方前端，非法路径强行打回 /
 	stat, err := os.Stat(absRequested)
 	if os.IsNotExist(err) || (err == nil && stat.IsDir()) {
 		ext := filepath.Ext(absRequested)
-		// 如果是请求具体资源类型文件且找不到，直接返回 404
 		if ext != "" && ext != ".html" {
 			w.Header().Set("Cache-Control", "no-store")
 			http.NotFound(w, r)
 			return
 		}
-		// SPA 路由请求，如 /sub/edit，返回 index.html 交由前端接管
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		http.ServeFile(w, r, filepath.Join(root, "index.html"))
 		return
 	}
 
-	// 补救 Windows 环境偶尔返回 text/plain 的问题
 	switch filepath.Ext(absRequested) {
 	case ".js":
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
@@ -303,7 +375,6 @@ func (s *LoonServer) Start() error {
 		}
 	}()
 
-	// 启动探活
 	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
 	if ok {
 		client := &http.Client{Timeout: 100 * time.Millisecond}
@@ -324,18 +395,26 @@ func (s *LoonServer) Start() error {
 			return fmt.Errorf("HTTP 引擎探活超时，服务无法响应")
 		}
 	}
-	return nil // 返回 nil 说明端口已通
+	return nil
 }
 
 func (s *LoonServer) Shutdown(ctx context.Context) error {
-	s.baseCancel() // 取消所有脱离客户端连接运行的脚本
+	s.baseCancel()
 	return s.httpServer.Shutdown(ctx)
 }
 
 // executeDetached 在与客户端连接无关的 Context 中执行脚本，并合并相同 key 的并发请求。
-// 调用方等待结果时仍会响应自身的 clientCtx：客户端断开只会让它提前返回，
-// 后台脚本继续跑完，结果由 Sub-Store 自身缓存，供下一次请求（或定时缓存任务）命中。
-func (s *LoonServer) executeDetached(clientCtx context.Context, key string, req *LoonHTTPRequest, argument string) (*LoonHTTPResponse, error) {
+func (s *LoonServer) executeDetached(clientCtx context.Context, key string, req *LoonHTTPRequest, argument string, cacheable bool) (*LoonHTTPResponse, error) {
+	if cacheable {
+		if val, ok := s.responseCache.Load(key); ok {
+			cached := val.(cachedResponse)
+			if time.Now().Before(cached.expiresAt) {
+				return cached.resp, nil
+			}
+			s.responseCache.Delete(key)
+		}
+	}
+
 	s.inflightMu.Lock()
 	call, ok := s.inflight[key]
 	if !ok {
@@ -352,9 +431,16 @@ func (s *LoonServer) executeDetached(clientCtx context.Context, key string, req 
 				s.inflightMu.Unlock()
 				close(call.done)
 			}()
-			// 使用与连接脱钩的 baseCtx 执行
+
 			call.resp, call.err = engine.Execute(s.baseCtx, req, argument)
-			// 记录由于客户端断开导致的后台执行错误，避免错误被静默吞噬
+
+			if cacheable && call.err == nil && call.resp != nil && call.resp.Status >= 200 && call.resp.Status < 400 {
+				s.responseCache.Store(key, cachedResponse{
+					resp:      call.resp,
+					expiresAt: time.Now().Add(60 * time.Second),
+				})
+			}
+
 			if call.err != nil {
 				slog.Debug("后台脱机任务执行失败", "url", req.URL, "err", call.err)
 			}
@@ -370,10 +456,6 @@ func (s *LoonServer) executeDetached(clientCtx context.Context, key string, req 
 	}
 }
 
-// cronHTTPClient 供内置定时任务回调本机 Sub-Store 服务使用：
-//   - 不跟随重定向：内部任务只应访问本机服务，任何 30x 都不该把请求带到外网；
-//   - 不走系统代理：目标始终是 127.0.0.1；
-//   - 设置总超时，避免任务永久挂起。
 var cronHTTPClient = &http.Client{
 	Timeout: 10 * time.Minute,
 	Transport: func() *http.Transport {
@@ -384,14 +466,12 @@ var cronHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-// callLocalSubStore 请求本机 Sub-Store 接口，并按状态码判断成败。
 func callLocalSubStore(task, target string) {
 	req, err := http.NewRequest("GET", target, nil)
 	if err != nil {
 		slog.Error("构建定时任务请求失败", "err", err)
 		return
 	}
-	// 伪装浏览器请求头，防止 Sub-Store 内层某些库验证拦截抛出 500
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Subs-Check-Pro-Cron/1.0")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
@@ -420,11 +500,7 @@ func callLocalSubStore(task, target string) {
 
 		if err := json.Unmarshal(snippet, &errResp); err == nil {
 			details := strings.TrimSpace(errResp.Error.Details)
-
-			// 去掉 Reason:
 			details = strings.TrimPrefix(details, "Reason:")
-
-			// 去掉首尾 [] 和空格
 			details = strings.Trim(details, " []")
 
 			slog.Error(
@@ -439,17 +515,12 @@ func callLocalSubStore(task, target string) {
 	slog.Debug("定时任务执行成功", "task", task)
 }
 
-// StartSubStoreCronJobs 解析配置并启动定时任务
-// 返回 *cron.Cron 以便在外层通过 defer 优雅关闭
 func StartSubStoreCronJobs(serverPort string, backendPath string) *cron.Cron {
-	// 避免慢订阅导致重叠执行，阻塞 JS 引擎
 	c := cron.New(cron.WithChain(cron.SkipIfStillRunning(cron.DiscardLogger)))
 
 	apiBase := fmt.Sprintf("http://127.0.0.1:%s%s", serverPort, backendPath)
 	hasTask := false
 
-	// 1. 同步 Gist 任务: sub-store-sync-cron
-	// 定时将订阅/文件上传到私有 Gist
 	syncCron := strings.TrimSpace(config.GlobalConfig.SubStoreSyncCron)
 	if syncCron != "" {
 		_, err := c.AddFunc(syncCron, func() {
@@ -464,8 +535,6 @@ func StartSubStoreCronJobs(serverPort string, backendPath string) *cron.Cron {
 		}
 	}
 
-	// 2. 更新订阅任务: sub-store-produce-cron
-	// 后台定时处理订阅，用于脚本缓存；脚本参数必须开启缓存
 	produceCronStr := strings.TrimSpace(config.GlobalConfig.SubStoreProduceCron)
 	if produceCronStr != "" {
 		tasks := strings.SplitSeq(produceCronStr, ";")
@@ -482,7 +551,6 @@ func StartSubStoreCronJobs(serverPort string, backendPath string) *cron.Cron {
 			}
 
 			var cronExpr, typ, namesStr string
-			// 倒序查找 sub 或 col：完美解决 cron 表达式带逗号，以及后面逗号分隔配置多订阅名的问题
 			for i := 1; i < len(parts)-1; i++ {
 				t := strings.TrimSpace(parts[i])
 				if t == "sub" || t == "col" {
@@ -533,9 +601,7 @@ func StartSubStoreCronJobs(serverPort string, backendPath string) *cron.Cron {
 	return nil
 }
 
-// ReloadSubStoreCronJobs 热重载 Sub-Store 定时任务，无需重启 HTTP 服务
 func ReloadSubStoreCronJobs() {
-	// 如果服务未运行，则直接跳过（下次启动时会自动读取最新配置）
 	if !IsSubStoreRunning.Load() {
 		return
 	}

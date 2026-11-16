@@ -341,11 +341,11 @@ func FetchSubsData(rawURL string) ([]byte, error) {
 
 	// UA 列表池
 	uaList := []string{
-		"mihomo/1.19.27",
+		"clash-verge/v2.5.10",
+		"Shadowrocket/3131 Darwin/25.4.0",
+		"v2rayN/7.25.6",
+		"SFA/1.14.4 (500; sing-box 1.14.4; language zh_Hans_CN)",
 		convert.RandUserAgent(),
-		"v2ray",
-		"sing-box/1.13.0",
-		"ClashMetaForAndroid/2.11.30",
 	}
 
 	// GitHub 地址使用浏览器 ua 和curl
@@ -711,7 +711,7 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 	warnedSize := false
 	if resp.ContentLength >= warnLimitSize {
 		slog.Warn(
-			"订阅文件较大",
+			"注意订阅文件体积",
 			"URL", resp.Request.URL,
 			"size_mb", fmt.Sprintf("%.1f", float64(resp.ContentLength)/(1<<20)),
 			"warn_mb", warnLimitSize>>20,
@@ -789,7 +789,7 @@ func readSubscriptionBody(resp *http.Response) ([]byte, *fetchFailure) {
 	// 如果之前因为没有 Content-Length 没触发警告，读完后发现文件很大，这里补报
 	if !warnedSize && size >= warnLimitSize {
 		slog.Warn(
-			"订阅文件较大",
+			"注意订阅文件体积",
 			"URL", resp.Request.URL,
 			"size_mb", fmt.Sprintf("%.1f", float64(size)/(1<<20)),
 			"warn_mb", warnLimitSize>>20,
